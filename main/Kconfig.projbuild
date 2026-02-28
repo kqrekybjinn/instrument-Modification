@@ -1,0 +1,152 @@
+menu "Example Configuration"
+
+    orsource "$IDF_PATH/examples/common_components/env_caps/$IDF_TARGET/Kconfig.env_caps"
+
+    config APP_QUIT_PIN
+        int "APP Quit button GPIO pin"
+        range ENV_GPIO_RANGE_MIN ENV_GPIO_IN_RANGE_MAX
+        default 0
+        help
+            GPIO pin number to be used as APP_QUIT button.
+
+endmenu
+
+menu "Touch Configuration"
+
+    config TOUCH_I2C_SDA
+        int "Touch I2C SDA GPIO"
+        range ENV_GPIO_RANGE_MIN ENV_GPIO_IN_RANGE_MAX
+        default 1
+        help
+            GPIO pin number to be used as Touch I2C SDA.
+
+    config TOUCH_I2C_SCL
+        int "Touch I2C SCL GPIO"
+        range ENV_GPIO_RANGE_MIN ENV_GPIO_IN_RANGE_MAX
+        default 2
+        help
+            GPIO pin number to be used as Touch I2C SCL.
+
+    config TOUCH_I2C_INT
+        int "Touch INT GPIO (-1 if not used)"
+        range -1 ENV_GPIO_IN_RANGE_MAX
+        default 18
+        help
+            GPIO pin number to be used as Touch INT.
+
+    config TOUCH_I2C_RST
+        int "Touch RST GPIO (-1 if not used)"
+        range -1 ENV_GPIO_IN_RANGE_MAX
+        default -1
+        help
+            GPIO pin number to be used as Touch RST (active-low on most FT6x36 variants).
+
+    config TOUCH_I2C_ADDR
+        hex "Touch I2C 7-bit address"
+        default 0x38
+        help
+            FT6336U common I2C address is 0x38. Some boards may use 0x3A.
+
+    config TOUCH_I2C_FREQ_HZ
+        int "Touch I2C frequency (Hz)"
+        range 10000 1000000
+        default 400000
+        help
+            I2C clock for touch controller. Typical values: 100000 or 400000.
+
+    config TOUCH_SWAP_XY
+        bool "Swap X/Y"
+        default n
+        help
+            Enable if your touch coordinates appear rotated by 90 degrees.
+
+    config TOUCH_MIRROR_X
+        bool "Mirror X"
+        default n
+        help
+            Enable if touch X direction is reversed.
+
+    config TOUCH_MIRROR_Y
+        bool "Mirror Y"
+        default n
+        help
+            Enable if touch Y direction is reversed.
+
+    config TOUCH_I2C_PORT
+        int "Touch I2C Port (0 or 1)"
+        range 0 1
+        default 0
+        help
+            I2C peripheral port number.
+
+endmenu
+
+menu "UART Debug"
+
+    config MOTOR_UART_TX_DUMP
+        bool "Log motor UART TX frames"
+        default y
+        help
+            Print the exact bytes written to the motor UART (UART1) to the serial monitor.
+            Useful for verifying protocol frames and CRC during bring-up.
+
+endmenu
+
+menu "LCD Configuration"
+
+    choice
+        prompt "LCD controller"
+        default LCD_CONTROLLER_ST7796
+
+        config LCD_CONTROLLER_ST7789
+            bool "ST7789"
+
+        config LCD_CONTROLLER_ST7796
+            bool "ST7796"
+
+        config LCD_CONTROLLER_ILI9341
+            bool "ILI9341"
+
+    endchoice
+
+    config LCD_H_RES
+        int "LCD horizontal resolution"
+        default 320
+
+    config LCD_V_RES
+        int "LCD vertical resolution"
+        default 480
+
+    config LCD_RST_GPIO
+        int "LCD RST GPIO (-1 if not used)"
+        default -1
+
+    config LCD_CS_GPIO
+        int "LCD CS GPIO"
+        default 21
+
+    config LCD_RS_GPIO
+        int "LCD RS/DC GPIO"
+        default 47
+
+    config LCD_WR_GPIO
+        int "LCD WR GPIO"
+        default 45
+
+    config LCD_RD_GPIO
+        int "LCD RD GPIO (-1 if not used)"
+        default 48
+
+    config LCD_PCLK_HZ
+        int "LCD WR clock (PCLK) frequency (Hz)"
+        default 10000000
+
+    config LCD_BK_LIGHT_GPIO
+        int "LCD backlight GPIO (-1 if always on)"
+        default 13
+
+    config LCD_BK_LIGHT_ON_LEVEL
+        int "LCD backlight ON level (0/1)"
+        default 1
+
+endmenu
