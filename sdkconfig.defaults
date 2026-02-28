@@ -1,0 +1,17 @@
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_18=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_48=y
+
+# Enable built-in CJK font for Chinese UI text
+CONFIG_LV_FONT_SIMSUN_16_CJK=y
+
+# Use CJK font as default to avoid missing glyph placeholders
+CONFIG_LV_FONT_DEFAULT_SIMSUN_16_CJK=y
+
+# Touch: LCD uses swapped H/V (portrait mode), touch must swap X/Y to match
+CONFIG_TOUCH_SWAP_XY=y
+CONFIG_TOUCH_MIRROR_Y=y
+
+# Debug: print motor UART TX bytes to monitor
+CONFIG_MOTOR_UART_TX_DUMP=y
