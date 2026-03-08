@@ -74,10 +74,36 @@ esp_err_t motor_enable(uint8_t motor_id)
 
 esp_err_t motor_set_speed_mode(uint8_t motor_id)
 {
-    uint8_t frame[MOTOR_FRAME_LEN] = {motor_id, MOTOR_CMD_SWITCH, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    uint8_t frame[MOTOR_FRAME_LEN] = {motor_id, MOTOR_CMD_SWITCH, MOTOR_MODE_VAL_SPEED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     esp_err_t err = motor_uart_write(frame);
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "Motor 0x%02X -> speed mode", motor_id);
+    }
+    return err;
+}
+
+esp_err_t motor_set_position_mode(uint8_t motor_id)
+{
+    uint8_t frame[MOTOR_FRAME_LEN] = {motor_id, MOTOR_CMD_SWITCH, MOTOR_MODE_VAL_POSITION, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    esp_err_t err = motor_uart_write(frame);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Motor 0x%02X -> position mode", motor_id);
+    }
+    return err;
+}
+
+esp_err_t motor_drive_position(uint8_t motor_id, int16_t pos_01deg)
+{
+    uint8_t data_h = (uint8_t)((pos_01deg >> 8) & 0xFF);
+    uint8_t data_l = (uint8_t)(pos_01deg & 0xFF);
+    uint8_t frame[MOTOR_FRAME_LEN] = {
+        motor_id, MOTOR_CMD_DRIVE,
+        data_h, data_l,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    esp_err_t err = motor_uart_write(frame);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Motor 0x%02X position 0.1deg=%d", motor_id, (int)pos_01deg);
     }
     return err;
 }
@@ -113,4 +139,98 @@ esp_err_t motor_brake(uint8_t motor_id)
         .rpm10 = 0,
     };
     return motor_drive_speed(motor_id, stop);
+}
+
+esp_err_t motor_drive_speed_fb(uint8_t motor_id, motor_drive_cmd_t drive, motor_drive_resp_t *resp)
+{
+    uint8_t data_h = (drive.rpm10 >> 8) & 0xFF;
+    uint8_t data_l = drive.rpm10 & 0xFF;
+
+    // Build frame without INFO logging (called at high frequency)
+    uart_flush_input(MOTOR_UART_NUM);
+    uint8_t frame[MOTOR_FRAME_LEN] = {
+        motor_id, MOTOR_CMD_DRIVE, data_h, data_l, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    frame[9] = crc8_maxim(frame, FRAME_DATA_LEN);
+    int written = uart_write_bytes(MOTOR_UART_NUM, frame, MOTOR_FRAME_LEN);
+    if (written != MOTOR_FRAME_LEN) {
+        return ESP_FAIL;
+    }
+
+    if (!resp) {
+        return ESP_OK;
+    }
+
+    // Read up to 20 bytes: may contain TX echo (10 bytes) + response (10 bytes)
+    uint8_t buf[20];
+    int n = uart_read_bytes(MOTOR_UART_NUM, buf, sizeof(buf), pdMS_TO_TICKS(15));
+    if (n < MOTOR_FRAME_LEN) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    // Scan for valid 0x65 response frame
+    for (int i = 0; i <= n - MOTOR_FRAME_LEN; i++) {
+        if (buf[i] == motor_id && buf[i + 1] == MOTOR_RESP_DRIVE) {
+            if (crc8_maxim(buf + i, FRAME_DATA_LEN) != buf[i + 9]) {
+                continue;
+            }
+            const uint8_t *f = buf + i;
+            // [2][3]: actual speed, int16 big-endian, 0.1rpm/unit
+            resp->actual_rpm10 = (int16_t)(((uint16_t)f[2] << 8) | f[3]);
+            // [4][5]: actual current, int16 big-endian
+            resp->actual_cur10 = (int16_t)(((uint16_t)f[4] << 8) | f[5]);
+            // [7]: winding temperature
+            resp->temperature = f[7];
+            resp->fault_code = f[8];
+            return ESP_OK;
+        }
+    }
+
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t motor_query_mileage(uint8_t motor_id, motor_mileage_resp_t *resp)
+{
+    // Flush stale RX data before sending query
+    uart_flush_input(MOTOR_UART_NUM);
+
+    // Build and send 0x74 query frame (no logging – called at high frequency)
+    uint8_t frame[MOTOR_FRAME_LEN] = {motor_id, MOTOR_CMD_QUERY, 0, 0, 0, 0, 0, 0, 0, 0};
+    frame[9] = crc8_maxim(frame, FRAME_DATA_LEN);
+    int written = uart_write_bytes(MOTOR_UART_NUM, frame, MOTOR_FRAME_LEN);
+    if (written != MOTOR_FRAME_LEN) {
+        return ESP_FAIL;
+    }
+
+    // Read up to 20 bytes: may contain TX echo (10 bytes) + response (10 bytes)
+    // At 38400 baud, 10 bytes ≈ 2.6ms; motor processing ~3ms → wait 15ms
+    uint8_t buf[20];
+    int n = uart_read_bytes(MOTOR_UART_NUM, buf, sizeof(buf), pdMS_TO_TICKS(15));
+    if (n < MOTOR_FRAME_LEN) {
+        ESP_LOGD(TAG, "mileage query: short read %d bytes", n);
+        return ESP_ERR_TIMEOUT;
+    }
+
+    // Scan for valid 0x75 response frame (skip TX echo if present)
+    for (int i = 0; i <= n - MOTOR_FRAME_LEN; i++) {
+        if (buf[i] == motor_id && buf[i + 1] == MOTOR_RESP_QUERY) {
+            if (crc8_maxim(buf + i, FRAME_DATA_LEN) != buf[i + 9]) {
+                continue; // CRC mismatch, keep scanning
+            }
+            const uint8_t *f = buf + i;
+            // Mileage: signed int32, big-endian, bytes [2..5]
+            resp->mileage_rotations = (int32_t)(
+                ((uint32_t)f[2] << 24) | ((uint32_t)f[3] << 16) |
+                ((uint32_t)f[4] <<  8) |  (uint32_t)f[5]);
+            // Current angle: uint16, big-endian, bytes [6..7]
+            resp->position_raw = (uint16_t)(((uint16_t)f[6] << 8) | f[7]);
+            resp->fault_code = f[8];
+            ESP_LOGD(TAG, "mileage=%ld pos=%u fault=0x%02X",
+                     (long)resp->mileage_rotations, resp->position_raw, resp->fault_code);
+            return ESP_OK;
+        }
+    }
+
+    ESP_LOGD(TAG, "mileage query: no valid 0x75 in %d bytes", n);
+    return ESP_ERR_NOT_FOUND;
 }
