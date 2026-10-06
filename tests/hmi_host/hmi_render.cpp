@@ -51,12 +51,11 @@ int main(){
  v.phase=(uint8_t)workflow::Phase::Complete;v.displacement=333578;render(v,"complete");click("新运行");assert(received==GUI_EVENT_NEW_RUN);click("回本次起点\n逆时针 · 100 RPM");assert(received==GUI_EVENT_RETURN);
  v.phase=(uint8_t)workflow::Phase::Returning;v.reversing=true;v.displacement=122880;render(v,"returning");click("停止");assert(received==GUI_EVENT_STOP);
  v.phase=(uint8_t)workflow::Phase::ReturnStopped;render(v,"return_stopped");click("继续回位\n逆时针 · 100 RPM");assert(received==GUI_EVENT_RETURN);
- v.phase=(uint8_t)workflow::Phase::FeedbackLost;v.feedback_valid=false;render(v,"feedback_lost");assert(disabled("继续"));click("停止");assert(received==GUI_EVENT_STOP);
- v.feedback_valid=true;render(v,"feedback_recovered");click("继续");assert(received==GUI_EVENT_STATE_TOGGLE);click("回本次起点\n逆时针 · 100 RPM");assert(received==GUI_EVENT_RETURN);click("新运行");assert(received==GUI_EVENT_NEW_RUN);
+ v.phase=(uint8_t)workflow::Phase::Stopped;v.feedback_valid=false;render(v,"stopped_without_confirmation");click("新运行");assert(received==GUI_EVENT_NEW_RUN);click("回本次起点\n逆时针 · 100 RPM");assert(received==GUI_EVENT_RETURN);
  v.phase=(uint8_t)workflow::Phase::Ready;v.origin_valid=false;v.mode=0;v.displacement=0;render(v,"free_ready");
  v.phase=(uint8_t)workflow::Phase::Running;v.origin_valid=true;v.displacement=123*32768;render(v,"free_running");click("暂停");assert(received==GUI_EVENT_STATE_TOGGLE);
  v.mode=1;v.target=9999;v.displacement=9999LL*32768+16384;render(v,"maximum_count");
  v.phase=(uint8_t)workflow::Phase::Complete;v.target=10;v.displacement=11*32768;render(v,"outside_tolerance");assert(find(lv_scr_act(),"已停止 · 超出容差"));
- v.phase=(uint8_t)workflow::Phase::OriginLost;v.origin_valid=false;v.feedback_valid=false;render(v,"origin_lost");assert(disabled("新运行"));
+
  std::cout<<"HMI_RENDER_AND_INTERACTION_PASS\n";
 }

@@ -18,6 +18,8 @@ private:
  void task_loop();
  bool refresh_position();
  void publish();
+ bool should_poll_position() const;
+ void finish_stop();
  void begin_settle(workflow::Phase destination, bool smooth);
  void handle_command(control_cmd_t command);
  void service_motion(int64_t now);
@@ -26,11 +28,7 @@ private:
  SemaphoreHandle_t state_lock_ = nullptr;
  control_state_t state_{}; // Written only by control task after init.
  control_state_t published_{}; // Cross-task snapshot guarded by state_lock_.
+ bool final_sample_pending_ = false;
  int16_t sent_rpm10_ = 0;
- int64_t last_feedback_us_ = 0;
  int64_t last_motion_us_ = 0;
- int64_t settle_started_us_ = 0;
- int64_t settle_previous_ = INT64_MIN;
- int stable_samples_ = 0;
- bool zero_sent_ = false;
 };

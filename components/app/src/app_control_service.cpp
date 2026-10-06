@@ -70,43 +70,33 @@ bool ControlService::refresh_position() {
  state_.motor_fault = err == ESP_OK ? response.fault_code : state_.motor_fault;
  state_.feedback_valid = err == ESP_OK && response.fault_code == 0 && response.position_raw < 32768;
  if (!state_.feedback_valid) return false;
- const int64_t now = esp_timer_get_time();
  const int64_t position = position_math::oriented_position(response.mileage_rotations, response.position_raw, state_.forward_ccw);
- if (state_.origin_valid && last_feedback_us_ > 0) {
-  // Reject discontinuities inconsistent with the maximum configured speed.
-  // Small power-on counter resets cannot be identified conclusively from 0x75 alone.
-  const int64_t max_change = (now - last_feedback_us_) * 380 * 32768 / 60000000 + 16384;
-  if (llabs(position - state_.pos_fixed_now) > max_change) {
-   ESP_LOGE(TAG, "Position discontinuity; origin is no longer trustworthy");
-   send_speed(0);
-   state_.feedback_valid = false;
-   state_.origin_valid = false;
-   state_.pos_fixed_start = INT64_MIN;
-   workflow::set_phase(state_, Phase::OriginLost);
-   return false;
-  }
- }
  state_.pos_fixed_now = position;
  state_.mileage_now = response.mileage_rotations;
- last_feedback_us_ = now;
  return true;
+}
+bool ControlService::should_poll_position() const {
+ return workflow::motion(state_.phase) || final_sample_pending_;
+}
+void ControlService::finish_stop() {
+ send_speed(0); // One zero-speed command, without stationary confirmation or retransmit loops.
+ const auto destination = state_.settle_destination;
+ if (destination == Phase::Ready) workflow::prepare_new(state_);
+ else workflow::set_phase(state_, destination);
+ final_sample_pending_ = true; // One final reading; failure never locks the controls.
 }
 void ControlService::begin_settle(Phase destination, bool smooth) {
  state_.settle_destination = destination;
  state_.settle_smooth = smooth;
  state_.run_start_us = 0;
  workflow::set_phase(state_, Phase::Settling);
- settle_started_us_ = esp_timer_get_time();
- last_motion_us_ = settle_started_us_;
- settle_previous_ = INT64_MIN;
- stable_samples_ = 0;
- zero_sent_ = false;
- if (!smooth || sent_rpm10_ == 0) zero_sent_ = send_speed(0);
+ last_motion_us_ = esp_timer_get_time();
+ if (!smooth || sent_rpm10_ == 0) finish_stop();
 }
 void ControlService::handle_command(control_cmd_t cmd) {
  const bool unlocked = workflow::parameters_unlocked(state_);
  if (cmd.id == CMD_SET_SPEED) {
-  if (state_.phase != Phase::Settling && workflow::valid_speed(cmd.value)) state_.target_rpm = cmd.value;
+  if (workflow::valid_speed(cmd.value)) state_.target_rpm = cmd.value;
   return;
  }
  if (cmd.id == CMD_MODE_SWITCH) { if (unlocked) state_.mode ^= 1; return; }
@@ -120,11 +110,11 @@ void ControlService::handle_command(control_cmd_t cmd) {
   return;
  }
  if (cmd.id == CMD_NEW_RUN) {
-  if (workflow::transition(state_, workflow::Action::NewRun) == Phase::Ready) workflow::prepare_new(state_);
+  if (workflow::transition(state_, workflow::Action::NewRun) == Phase::Ready) { workflow::prepare_new(state_); final_sample_pending_ = false; }
   return;
  }
  if (cmd.id == CMD_STOP) {
-  if (state_.phase == Phase::Settling) { state_.settle_destination = state_.reversing ? Phase::ReturnStopped : Phase::Stopped; state_.settle_smooth = false; zero_sent_ = send_speed(0); return; }
+  if (state_.phase == Phase::Settling) { state_.settle_destination = state_.reversing ? Phase::ReturnStopped : Phase::Stopped; state_.settle_smooth = false; finish_stop(); return; }
   if (state_.phase == Phase::Ready) return;
 
   begin_settle(state_.reversing ? Phase::ReturnStopped : Phase::Stopped, true);
@@ -136,7 +126,6 @@ void ControlService::handle_command(control_cmd_t cmd) {
   begin_settle(state_.reversing ? Phase::ReturnPaused : Phase::Paused, true);
   return;
  }
- if (!state_.feedback_valid || state_.motor_fault) return;
  Phase next = workflow::transition(state_, cmd.id == CMD_RETURN ? workflow::Action::Return : workflow::Action::Toggle);
  if (next == state_.phase) return;
  if (next == Phase::Ready) { workflow::prepare_new(state_); return; }
@@ -155,60 +144,21 @@ void ControlService::handle_command(control_cmd_t cmd) {
  if (next == Phase::Returning) state_.pos_fixed_peak = state_.pos_fixed_now;
  state_.run_start_us = esp_timer_get_time();
  last_motion_us_ = state_.run_start_us;
- if (!send_speed(command_rpm(state_, SMOOTH_SLOW_RPM))) begin_settle(Phase::FeedbackLost, false);
+ send_speed(command_rpm(state_, SMOOTH_SLOW_RPM));
 }
 void ControlService::service_motion(int64_t now) {
 
  if (state_.phase == Phase::Settling) {
-  if (!zero_sent_) {
-   int rpm = abs(sent_rpm10_) / 10;
-   int drop = std::max(1, (int)((now - last_motion_us_) * 260 / 1000000));
-   if (state_.settle_smooth && rpm > 8) send_speed(command_rpm(state_, std::max(8, rpm - drop)));
-   else zero_sent_ = send_speed(0);
-   last_motion_us_ = now;
-  }
-  if (zero_sent_ && state_.feedback_valid) {
-   const auto current = state_.pos_fixed_now;
-   const bool stable = settle_previous_ != INT64_MIN && llabs(current - settle_previous_) <= 32;
-   stable_samples_ = stable ? stable_samples_ + 1 : 0;
-   settle_previous_ = current;
-   if (stable_samples_ >= 2) {
-    Phase destination = state_.settle_destination;
-    if (destination == Phase::Ready) {
-     if (workflow::displacement(state_) <= 0) workflow::prepare_new(state_);
-     else workflow::set_phase(state_, Phase::ReturnPaused);
-    } else workflow::set_phase(state_, destination);
-    return;
-   }
-  } else { stable_samples_ = 0; settle_previous_ = INT64_MIN; }
-  // At max RPM smooth stop can take ~1.5s; only declare failure after the ramp plus settling.
-  if (now - settle_started_us_ > 3000000) {
-   send_speed(0);
-   workflow::set_phase(state_, Phase::FeedbackLost);
-   state_.feedback_valid = false;
-   stable_samples_ = 0;
-   settle_previous_ = INT64_MIN;
-  }
-  return;
- }
- if (state_.phase == Phase::FeedbackLost || state_.phase == Phase::OriginLost) {
-  // Restoration requires fresh stable samples; it never starts the motor automatically.
-  send_speed(0);
-  if (state_.feedback_valid) {
-   const auto position = state_.pos_fixed_now;
-   stable_samples_ = settle_previous_ != INT64_MIN && llabs(position - settle_previous_) <= 32 ? stable_samples_ + 1 : 0;
-   settle_previous_ = position;
-   if (stable_samples_ < 2) state_.feedback_valid = false;
-  } else { stable_samples_ = 0; settle_previous_ = INT64_MIN; }
+  const int rpm = abs(sent_rpm10_) / 10;
+  const int drop = std::max(1, (int)((now - last_motion_us_) * 260 / 1000000));
+  if (state_.settle_smooth && rpm > 8) send_speed(command_rpm(state_, std::max(8, rpm - drop)));
+  else finish_stop();
+  last_motion_us_ = now;
   return;
  }
  if (!workflow::motion(state_.phase)) return;
- if (state_.motor_fault || !state_.feedback_valid) {
-  if (state_.motor_fault || now - last_feedback_us_ >= 300000) {
-   begin_settle(Phase::FeedbackLost, false);
-  }
-  return;
- }
+ // A missed query keeps the previous count; it does not inject stop commands into the protocol.
+ if (!state_.feedback_valid) { last_motion_us_ = now; return; }
  const int64_t delta = workflow::displacement(state_);
  if (state_.phase == Phase::Running && state_.mode == MODE_COUNT && delta >= (int64_t)state_.target_count * 32768) { begin_settle(Phase::Complete, false); return; }
  if (state_.phase == Phase::Returning && delta <= 0) { begin_settle(Phase::Ready, false); return; }
@@ -220,7 +170,7 @@ void ControlService::service_motion(int64_t now) {
  if (desired > current) desired = std::min(desired, current + step);
  else if (state_.mode == MODE_FREE && !state_.reversing) desired = std::max(desired, current - step);
  const auto rpm10 = command_rpm(state_, desired);
- if (rpm10 != sent_rpm10_ && !send_speed(rpm10)) begin_settle(Phase::FeedbackLost, false);
+ if (rpm10 != sent_rpm10_) send_speed(rpm10);
  last_motion_us_ = now;
 }
 void ControlService::task_loop() {
@@ -231,19 +181,27 @@ void ControlService::task_loop() {
  ESP_ERROR_CHECK(motor_set_speed_mode(MOTOR_DEFAULT_ID));
  send_speed(0);
  gui_app_enter_main_ui();
- last_feedback_us_ = esp_timer_get_time();
  int64_t last_poll_us = 0;
  while (true) {
   control_cmd_t cmd{};
   bool got = xQueueReceive(control_q_, &cmd, pdMS_TO_TICKS(50)) == pdTRUE;
-  // Poll before interpreting any motion request, including after a stopped state.
+  // No idle/pause polling and no feedback-driven command loops.
   const int64_t now = esp_timer_get_time();
+  // User commands (especially Stop) are handled before waiting for a query.
+  if (got) {
+   const bool establishing_origin = state_.phase == Phase::Ready && cmd.id == CMD_STATE_TOGGLE;
+   handle_command(cmd);
+   // Start already performed its one origin query; do not immediately query again.
+   if (establishing_origin) last_poll_us = esp_timer_get_time();
+  }
   if (now - last_poll_us >= 50000) {
-   refresh_position();
+   if (should_poll_position()) {
+    refresh_position();
+    final_sample_pending_ = false;
+   }
    service_motion(esp_timer_get_time());
    last_poll_us = now;
   }
-  if (got) handle_command(cmd);
   publish();
  }
 }

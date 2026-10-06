@@ -3,12 +3,11 @@
 #include <limits.h>
 #include "position_math.hpp"
 namespace workflow {
-enum class Phase : uint8_t { Ready, Running, Paused, Stopped, Complete, Returning, ReturnPaused, ReturnStopped, FeedbackLost, Settling, OriginLost };
+enum class Phase : uint8_t { Ready, Running, Paused, Stopped, Complete, Returning, ReturnPaused, ReturnStopped, Settling };
 enum class Action : uint8_t { Toggle, Stop, NewRun, Return, Speed, Mode, Direction, Count, Step };
 struct State {
     Phase phase = Phase::Ready;
     Phase settle_destination = Phase::Stopped;
-    Phase recovery_phase = Phase::Paused;
     bool feedback_valid = false;
     bool origin_valid = false;
     bool running = false;
@@ -33,13 +32,13 @@ inline bool motion(Phase p) { return p == Phase::Running || p == Phase::Returnin
 inline int64_t displacement(const State &s) { return s.origin_valid ? s.pos_fixed_now - s.pos_fixed_start : 0; }
 inline bool parameters_unlocked(const State &s) { return s.phase == Phase::Ready && !s.origin_valid; }
 inline bool can_return(const State &s) {
- return s.origin_valid && s.feedback_valid && displacement(s) > 0 &&
- (s.phase == Phase::Stopped || s.phase == Phase::Complete || s.phase == Phase::ReturnStopped || s.phase == Phase::FeedbackLost);
+ return s.origin_valid && displacement(s) > 0 &&
+ (s.phase == Phase::Stopped || s.phase == Phase::Complete || s.phase == Phase::ReturnStopped);
 }
 inline void set_phase(State &s, Phase p) {
  s.phase = p;
  s.running = motion(p) || p == Phase::Settling;
- s.paused = p == Phase::Paused || p == Phase::ReturnPaused || p == Phase::FeedbackLost;
+ s.paused = p == Phase::Paused || p == Phase::ReturnPaused;
  if (p == Phase::Returning || p == Phase::ReturnPaused || p == Phase::ReturnStopped) s.reversing = true;
  if (p == Phase::Running || p == Phase::Ready || p == Phase::Complete || p == Phase::Stopped) s.reversing = false;
 }
@@ -54,24 +53,21 @@ inline void prepare_new(State &s) {
 inline Phase transition(const State &s, Action a) {
  const Phase p = s.phase;
  if (a == Action::Stop) {
-  if (p == Phase::Ready || p == Phase::OriginLost) return p;
+  if (p == Phase::Ready) return p;
   return s.reversing ? Phase::ReturnStopped : Phase::Stopped;
  }
  if (a == Action::NewRun) {
-  if (s.feedback_valid && !motion(p) && p != Phase::Settling && p != Phase::Paused && p != Phase::ReturnPaused) return Phase::Ready;
+  if (!motion(p) && p != Phase::Settling && p != Phase::Paused && p != Phase::ReturnPaused) return Phase::Ready;
   return p;
  }
  if (a == Action::Return) return can_return(s) ? Phase::Returning : p;
- if (a != Action::Toggle || !s.feedback_valid) return p;
+ if (a != Action::Toggle) return p;
  switch (p) {
  case Phase::Ready: return Phase::Running;
  case Phase::Running: return Phase::Paused;
  case Phase::Returning: return Phase::ReturnPaused;
  case Phase::Paused: return s.mode == 1 && displacement(s) >= (int64_t)s.target_count * 32768 ? Phase::Complete : Phase::Running;
  case Phase::ReturnPaused: return displacement(s) <= 0 ? Phase::Ready : Phase::Returning;
- case Phase::FeedbackLost:
-  if (s.reversing) return displacement(s) <= 0 ? Phase::Ready : Phase::Returning;
-  return s.mode == 1 && displacement(s) >= (int64_t)s.target_count * 32768 ? Phase::Complete : Phase::Running;
  default: return p; // A physical Start press after completion never repeats a run.
  }
 }

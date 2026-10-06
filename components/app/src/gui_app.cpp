@@ -11,7 +11,7 @@ static gui_view_t view_{};
 static bool built_;
 static lv_obj_t *boot_label_, *boot_bar_, *mode_, *direction_, *feedback_, *usb_, *tf_;
 static lv_obj_t *state_label_, *count_label_, *target_label_, *hint_, *progress_, *speed_, *target_;
-static lv_obj_t *minus_, *plus_, *step_, *primary_, *secondary_, *third_, *key_hint_;
+static lv_obj_t *minus_, *plus_, *step_, *primary_, *secondary_, *key_hint_;
 static lv_obj_t *modal_, *entry_, *error_;
 static bool target_modal_;
 static const auto bg = lv_color_hex(0x101B27), panel = lv_color_hex(0x1C2A38);
@@ -76,7 +76,6 @@ static void apply_count(lv_event_t*) {
  emit(GUI_EVENT_SET_COUNT,count);close_modal();
 }
 static void show_target(lv_event_t*) {
- if(view_.phase==(uint8_t)Phase::FeedbackLost && view_.feedback_valid && view_.origin_valid && view_.displacement>0){emit(GUI_EVENT_RETURN);return;}
  if(view_.phase!=(uint8_t)Phase::Ready || view_.origin_valid)return;
  close_modal();target_modal_=true;
  modal_=lv_obj_create(lv_scr_act());place(modal_,0,0,480,320);lv_obj_set_style_pad_all(modal_,0,0);
@@ -94,13 +93,12 @@ static void show_target(lv_event_t*) {
 }
 static void primary_click(lv_event_t*) {
  const auto p=(Phase)view_.phase;
- emit(p==Phase::Stopped||p==Phase::Complete||p==Phase::ReturnStopped||p==Phase::OriginLost?GUI_EVENT_NEW_RUN:GUI_EVENT_STATE_TOGGLE);
+ emit(p==Phase::Stopped||p==Phase::Complete||p==Phase::ReturnStopped?GUI_EVENT_NEW_RUN:GUI_EVENT_STATE_TOGGLE);
 }
 static void secondary_click(lv_event_t*) {
  const auto p=(Phase)view_.phase;
  emit(p==Phase::Stopped||p==Phase::Complete||p==Phase::ReturnStopped?GUI_EVENT_RETURN:GUI_EVENT_STOP);
 }
-static void third_click(lv_event_t*) {emit(GUI_EVENT_NEW_RUN);}
 static void build() {
  lv_obj_t *screen=lv_scr_act();lv_obj_clean(screen);lv_obj_set_style_bg_color(screen,bg,0);lv_obj_set_style_pad_all(screen,0,0);lv_obj_clear_flag(screen,LV_OBJ_FLAG_SCROLLABLE);
  text(screen,"MODI",12,12,80,&lv_font_montserrat_20);
@@ -123,7 +121,6 @@ static void build() {
  lv_obj_set_style_text_font(key_hint_,&lv_font_modi_16_cjk,0);
  primary_=button(screen,"启动",12,268,252,40,green,primary_click);
  secondary_=button(screen,"停止",272,268,196,40,red,secondary_click);
- third_=button(screen,"新运行",368,268,100,40,border,third_click);lv_obj_add_flag(third_,LV_OBJ_FLAG_HIDDEN);
  usb_=text(screen,"USB --",12,311,130,&lv_font_montserrat_14,muted);
  tf_=text(screen,"TF --",140,311,130,&lv_font_montserrat_14,muted);
  // Storage indicators share a compact line in the main card to keep all controls inside 320px.
@@ -145,11 +142,11 @@ void gui_app_render(const gui_view_t *v) {
  view_=*v;if(!built_){give();return;}
  const auto p=(Phase)v->phase;const bool ready=p==Phase::Ready&&!v->origin_valid;
  const bool result=p==Phase::Stopped||p==Phase::Complete||p==Phase::ReturnStopped;
- const bool lost=p==Phase::FeedbackLost;const bool moving=workflow::motion(p);
- if(modal_&&((target_modal_&&!ready)||p==Phase::Settling||p==Phase::OriginLost))close_modal();
+ const bool moving=workflow::motion(p);
+ if(modal_&&((target_modal_&&!ready)||p==Phase::Settling))close_modal();
  label(mode_,v->mode?"定圈模式":"自由模式");label(direction_,v->forward_ccw?"正转逆时针":"正转顺时针");
  enable(mode_,ready);enable(direction_,ready);
- lv_label_set_text(feedback_,p==Phase::OriginLost?"起点失效":v->motor_fault?"电机故障":v->feedback_valid?"反馈正常":"反馈未确认");
+ lv_label_set_text(feedback_,"");
  lv_obj_set_style_text_color(feedback_,v->feedback_valid?lv_color_hex(0x69D7B5):amber,0);
  const char *status="准备运行",*help="设置参数后按启动";lv_color_t color=white;
  switch(p) {
@@ -164,34 +161,30 @@ void gui_app_render(const gui_view_t *v) {
  case Phase::Returning:status="反转回位";help="圈数回到零；可暂停或停止";color=amber;break;
  case Phase::ReturnPaused:status="回位已暂停";help="继续回位，或停止回位";color=amber;break;
  case Phase::ReturnStopped:status="回位未完成";help="继续回位，或从此处新运行";color=amber;break;
- case Phase::FeedbackLost:status=v->feedback_valid?"反馈已恢复":"反馈失效";help=v->feedback_valid?"手动继续、停止或选择新运行":"已请求停止，实际状态未确认";color=amber;break;
- case Phase::Settling:status="正在停止";help="读取最终位置，请稍候";color=amber;break;
- case Phase::OriginLost:status="本次起点失效";help="位置发生跳变，需重新建立任务";color=amber;break;
+ case Phase::Settling:status="正在停止";help="平滑减速";color=amber;break;
  default:break;
  }
  lv_label_set_text(state_label_,status);lv_obj_set_style_text_color(state_label_,color,0);lv_label_set_text(hint_,help);
  int64_t h=v->displacement*100/32768,m=h<0?-h:h;char b[96];
- snprintf(b,sizeof(b),"%s%lld.%02lld",h<0?"-":"",(long long)(m/100),(long long)(m%100));lv_label_set_text(count_label_,p==Phase::OriginLost?"--":b);
- snprintf(b,sizeof(b),v->mode?"实际圈数 / 目标 %d 圈":"实际圈数",v->target);lv_label_set_text(target_label_,p==Phase::OriginLost?"原起点不可用于计数或回位":!v->feedback_valid&&v->origin_valid?"上次有效圈数 · 等待确认":v->reversing?"距本次起点 · 圈":b);
+ snprintf(b,sizeof(b),"%s%lld.%02lld",h<0?"-":"",(long long)(m/100),(long long)(m%100));lv_label_set_text(count_label_,b);
+ snprintf(b,sizeof(b),v->mode?"实际圈数 / 目标 %d 圈":"实际圈数",v->target);lv_label_set_text(target_label_,v->reversing?"距本次起点 · 圈":b);
  if(v->mode){lv_obj_clear_flag(progress_,LV_OBJ_FLAG_HIDDEN);int64_t value=v->target>0?v->displacement*1000/(v->target*32768LL):0;lv_bar_set_value(progress_,value<0?0:value>1000?1000:value,LV_ANIM_OFF);}else lv_obj_add_flag(progress_,LV_OBJ_FLAG_HIDDEN);
- snprintf(b,sizeof(b),"设定转速\n%d RPM · 点击选择",v->rpm);label(speed_,b);enable(speed_,p!=Phase::Settling);
+ snprintf(b,sizeof(b),"设定转速\n%d RPM · 点击选择",v->rpm);label(speed_,b);enable(speed_,true);
  snprintf(b,sizeof(b),v->mode?"目标圈数\n%d 圈 · 点击输入":"自由运行\n无目标圈数",v->target);if(v->mode&&!ready){snprintf(b,sizeof(b),"目标圈数\n%d 圈 · 本次已锁定",v->target);}
  label(target_,b);enable(target_,ready&&v->mode);
- if(lost&&v->feedback_valid){snprintf(b,sizeof(b),"回本次起点\n%s · %d RPM",v->forward_ccw?"顺时针":"逆时针",v->rpm);label(target_,b);enable(target_,v->origin_valid&&v->displacement>0);}
  snprintf(b,sizeof(b),"±%d",v->step);label(step_,b);
  for(auto o:{minus_,step_,plus_}) {enable(o,ready&&v->mode);if(v->mode)lv_obj_clear_flag(o,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN);}
- label(primary_,result||p==Phase::OriginLost?"新运行":moving?"暂停":p==Phase::ReturnPaused?"继续回位":p==Phase::Paused||lost?"继续":"启动");
+ label(primary_,result?"新运行":moving?"暂停":p==Phase::ReturnPaused?"继续回位":p==Phase::Paused?"继续":"启动");
  lv_obj_set_style_bg_color(primary_,moving?blue:green,0);
- enable(primary_,(result&&v->feedback_valid)||(ready&&v->feedback_valid)||moving||((p==Phase::Paused||p==Phase::ReturnPaused||lost)&&v->feedback_valid)||(p==Phase::OriginLost&&v->feedback_valid));
+ enable(primary_,p!=Phase::Settling);
  label(secondary_,"停止");lv_obj_set_style_bg_color(secondary_,red,0);
  if(result) {
   snprintf(b,sizeof(b),"%s\n%s · %d RPM",p==Phase::ReturnStopped?"继续回位":"回本次起点",v->forward_ccw?"顺时针":"逆时针",v->rpm);
-  label(secondary_,b);lv_obj_set_style_bg_color(secondary_,blue,0);enable(secondary_,v->origin_valid&&v->feedback_valid&&v->displacement>0);
- }else enable(secondary_,!ready&&p!=Phase::OriginLost);
- lv_obj_add_flag(third_,LV_OBJ_FLAG_HIDDEN);place(primary_,12,268,252,40);place(secondary_,272,268,196,40);
- if(lost&&v->feedback_valid){place(primary_,12,268,144,40);place(secondary_,164,268,144,40);place(third_,316,268,152,40);lv_obj_clear_flag(third_,LV_OBJ_FLAG_HIDDEN);}
+  label(secondary_,b);lv_obj_set_style_bg_color(secondary_,blue,0);enable(secondary_,v->origin_valid&&v->displacement>0);
+ }else enable(secondary_,!ready);
+ place(primary_,12,268,252,40);place(secondary_,272,268,196,40);
  // Hide the physical-key reminder in narrow space; labels stay readable at 16px.
- lv_label_set_text(key_hint_,result?"请选择下一步操作":moving?"键1 暂停  键2 停止":p==Phase::Paused||p==Phase::ReturnPaused||lost?"键1 继续  键2 停止":"键1 启动  键2 停止");
+ lv_label_set_text(key_hint_,result?"请选择下一步操作":moving?"键1 暂停  键2 停止":p==Phase::Paused||p==Phase::ReturnPaused?"键1 继续  键2 停止":"键1 启动  键2 停止");
  give();
 }
 void gui_app_update_usb(bool mounted) {if(!take())return;if(built_){lv_label_set_text(usb_,mounted?"USB OK":"USB --");lv_obj_set_style_text_color(usb_,mounted?lv_color_hex(0x69D7B5):muted,0);}give();}
