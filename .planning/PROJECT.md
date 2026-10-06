@@ -1,5 +1,12 @@
-# MODI
-ESP32-S3 / M0603A speed-mode motor controller with LVGL HMI.
-Count motor shaft turns relative to arbitrary starting angle; show actual completed turns.
-Acceptable final error: +/-0.5 turn. Display commanded RPM. Position mode is unusable per hardware testing.
-No automatic reverse correction. Existing return flow remains separate.
+# MODI 项目需求
+- ESP32-S3 / M0603A 总线电机，速度模式；内部位置模式实测不可用。
+- 从任意起始角度统计电机轴相对圈数，定圈目标 1–9999 整数圈，停止误差允许 ±0.5 圈。
+- 显示实际相对圈数，两位小数；RPM 明确显示设定值。
+- 保留自由模式；两个模式都有暂停/继续、停止、新运行、回位。
+- GPIO12 启动/暂停/继续；GPIO15 停止。停止不反转。
+- 完成或停止后保留起点：新运行只进入准备状态，启动时重新读取起点；回位点击后立即运动。
+- 回位使用当前设定转速并在近起点减速，显示相对圈数降到零，不另保留正转结果卡。
+- 回位中停止保留起点，可以继续回位或开始新运行。
+- 50/100/200/300/380 RPM 五档直接选择，运行和暂停可调速；本次任务内模式、方向、目标锁定。
+- 反馈恢复不自动运动；有效反馈和静止确认后由用户选择继续、回位、结束或新运行。
+- 实际屏幕为 480×320 横屏，保留现有 LCD 和触摸方向。

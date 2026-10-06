@@ -1,7 +1,8 @@
 # Deferred
-- Sensor parsing is a placeholder byte average.
-- Log file overwrite on startup/reinsert and ignored write errors.
-- Key debounce and emergency stop semantics need review.
-- Return cancellation establishes a new logical origin, not a physical home.
-- UART fragmentation/echo/late responses need real capture.
-- Speed-mode stopping uses zero-speed command; brake behavior unverified.
+- 真实 0x75 里程/角度组合、分段接收、回显与迟到帧需要实测。
+- ±0.5 圈停止和回位误差取决于负载、最低稳定速度和制动，需要实测。
+- 发送零速成功不等于电机已停止；断开物理链路时只能请求停止，无法保证执行。
+- 仅位置跳变检测无法辨别所有重启/编码器计数清零，尤其小位移重启。
+- 压力传感器解析仍为字节平均占位实现。
+- USB 日志启动/重插覆盖与写入错误处理尚未修复；最终停止结果尚未作为独立日志事件保存。
+- 硬件急停/失联停机能力需依据设备实际方案确认。

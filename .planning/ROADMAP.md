@@ -1,4 +1,5 @@
 # Roadmap
-1. Back up and fix count origin, direction, final feedback and display.
-2. Capture real 0x75 feedback and verify cross-turn semantics.
-3. Validate stopping error on hardware; tune deceleration only if required.
+1. 计数可靠性：起点、方向、最终反馈和实际显示已完成软件修改；硬件待验。
+2. HMI 与操作状态机：已实现、模拟和编译通过；硬件待验。
+3. 真实反馈采集：核对里程与角度跨圈、反向关系。
+4. 实机验收：任意起点，目标 1/10/100 圈，五档速度、正反方向；最终误差 ±0.5 圈。
