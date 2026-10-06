@@ -19,7 +19,7 @@ private:
  bool refresh_position();
  void publish();
  bool should_poll_position() const;
- void finish_stop();
+ void finish_stop(bool emergency = false);
  void begin_settle(workflow::Phase destination, bool smooth);
  void handle_command(control_cmd_t command);
  void service_motion(int64_t now);

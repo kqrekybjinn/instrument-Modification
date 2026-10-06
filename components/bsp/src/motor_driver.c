@@ -135,10 +135,11 @@ esp_err_t motor_drive_speed(uint8_t motor_id, motor_drive_cmd_t drive)
 
 esp_err_t motor_brake(uint8_t motor_id)
 {
-    motor_drive_cmd_t stop = {
-        .rpm10 = 0,
+    // Speed-mode brake flag is DATA[7]=0xFF; a normal zero setpoint is not a brake.
+    uint8_t frame[MOTOR_FRAME_LEN] = {
+        motor_id, MOTOR_CMD_DRIVE, 0, 0, 0, 0, 0, 0xFF, 0, 0,
     };
-    return motor_drive_speed(motor_id, stop);
+    return motor_uart_write(frame);
 }
 
 esp_err_t motor_drive_speed_fb(uint8_t motor_id, motor_drive_cmd_t drive, motor_drive_resp_t *resp)

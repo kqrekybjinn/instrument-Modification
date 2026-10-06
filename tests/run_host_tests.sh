@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")/.."
+python3 tests/brake_frame_test.py
 task_test_dir=$(mktemp -d)
 trap 'rm -f "$task_test_dir/position" "$task_test_dir/workflow" "$task_test_dir/control"; rmdir "$task_test_dir"' EXIT
 c++ -std=c++17 -Wall -Wextra -Werror -Icomponents/app/include tests/position_math_test.cpp -o "$task_test_dir/position"

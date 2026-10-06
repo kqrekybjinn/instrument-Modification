@@ -85,9 +85,13 @@ bool ControlService::refresh_position() {
 bool ControlService::should_poll_position() const {
  return workflow::motion(state_.phase) || final_sample_pending_;
 }
-void ControlService::finish_stop() {
+void ControlService::finish_stop(bool emergency) {
  ESP_LOGI(TAG, "Stop phase=%u delta=%lld target=%d", (unsigned)state_.settle_destination, (long long)workflow::displacement(state_), state_.target_count);
- send_speed(0); // One zero-speed command, without stationary confirmation or retransmit loops.
+ if (emergency) {
+  const auto err = motor_brake(MOTOR_DEFAULT_ID);
+  if (err == ESP_OK) sent_rpm10_ = 0;
+  else { state_.feedback_valid = false; ESP_LOGE(TAG, "Emergency brake write failed"); }
+ } else send_speed(0); // One command, without confirmation or retransmit loops.
  const auto destination = state_.settle_destination;
  if (destination == Phase::Ready) workflow::prepare_new(state_);
  else workflow::set_phase(state_, destination);
@@ -122,10 +126,11 @@ void ControlService::handle_command(control_cmd_t cmd) {
   return;
  }
  if (cmd.id == CMD_STOP) {
-  if (state_.phase == Phase::Settling) { state_.settle_destination = state_.reversing ? Phase::ReturnStopped : Phase::Stopped; state_.settle_smooth = false; finish_stop(); return; }
   if (state_.phase == Phase::Ready) return;
-
-  begin_settle(state_.reversing ? Phase::ReturnStopped : Phase::Stopped, true);
+  state_.settle_destination = state_.reversing ? Phase::ReturnStopped : Phase::Stopped;
+  state_.settle_smooth = false;
+  state_.run_start_us = 0;
+  finish_stop(true); // Touch and physical Stop brake immediately in every mode.
   return;
  }
  if (cmd.id != CMD_STATE_TOGGLE && cmd.id != CMD_RETURN) return;
