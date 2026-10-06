@@ -45,30 +45,19 @@ bool InputService::key_pressed(gpio_num_t pin)
 void InputService::task_loop()
 {
     keys_init();
-    bool prev_start = false;
-    bool prev_stop = false;
-
-    while (1) {
-        bool s = key_pressed(KEY_START_PIN);
-        bool p = key_pressed(KEY_STOP_PIN);
-
-        if (s && !prev_start) {
-            // Start key: always toggles start/stop in both modes
-            control_.push_cmd(CMD_STATE_TOGGLE);
-        }
-        if (p && !prev_stop) {
-            control_state_t st = control_.snapshot();
-            if (st.mode == MODE_COUNT) {
-                // Count mode B key: stop/reverse flow
-                control_.push_cmd(CMD_COUNT_ABORT);
-            } else {
-                // Free run mode: cycle speed (works when stopped or running)
-                control_.push_cmd(CMD_SPEED_STEP);
+    bool stable[2] = {false, false};
+    bool candidate[2] = {false, false};
+    unsigned unchanged[2] = {0, 0};
+    while (true) {
+        const bool raw[2] = {key_pressed(KEY_START_PIN), key_pressed(KEY_STOP_PIN)};
+        for (int i = 0; i < 2; ++i) {
+            if (raw[i] != candidate[i]) { candidate[i] = raw[i]; unchanged[i] = 1; }
+            else if (unchanged[i] < 3) ++unchanged[i];
+            if (unchanged[i] >= 3 && stable[i] != candidate[i]) {
+                stable[i] = candidate[i];
+                if (stable[i]) control_.push_cmd(i == 0 ? CMD_STATE_TOGGLE : CMD_STOP);
             }
         }
-        prev_start = s;
-        prev_stop = p;
-
         vTaskDelay(pdMS_TO_TICKS(KEY_SCAN_MS));
     }
 }

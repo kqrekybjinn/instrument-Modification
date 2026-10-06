@@ -106,41 +106,11 @@ static void storage_debug_task(void *arg)
     vTaskDelete(NULL);
 }
 
-static void gui_event_bridge(gui_event_t evt)
+static void gui_event_bridge(gui_event_t event, int16_t value)
 {
-    if (!s_control) {
-        return;
-    }
-
-    switch (evt) {
-    case GUI_EVENT_SPEED_STEP:
-        if (s_control->snapshot().mode == MODE_COUNT) {
-            s_control->push_cmd(CMD_COUNT_ABORT);
-        } else {
-            s_control->push_cmd(CMD_SPEED_STEP);
-        }
-        break;
-    case GUI_EVENT_STATE_TOGGLE:
-        s_control->push_cmd(CMD_STATE_TOGGLE);
-        break;
-    case GUI_EVENT_MODE_SWITCH:
-        s_control->push_cmd(CMD_MODE_SWITCH);
-        break;
-    case GUI_EVENT_COUNT_INC:
-        s_control->push_cmd(CMD_COUNT_INC);
-        break;
-    case GUI_EVENT_COUNT_DEC:
-        s_control->push_cmd(CMD_COUNT_DEC);
-        break;
-    case GUI_EVENT_COUNT_STEP_TOGGLE:
-        s_control->push_cmd(CMD_COUNT_STEP_TOGGLE);
-        break;
-    case GUI_EVENT_FORWARD_DIR_TOGGLE:
-        s_control->push_cmd(CMD_FORWARD_DIR_TOGGLE);
-        break;
-    default:
-        break;
-    }
+    if (!s_control) return;
+    static_assert((int)GUI_EVENT_COUNT_STEP_TOGGLE == (int)CMD_COUNT_STEP_TOGGLE, "GUI/control command mapping");
+    s_control->push_cmd((control_cmd_id_t)event, value);
 }
 
 void AppController::start()
