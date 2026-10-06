@@ -55,8 +55,8 @@ int main(){
  static lv_disp_drv_t driver;lv_disp_drv_init(&driver);driver.hor_res=480;driver.ver_res=320;driver.draw_buf=&buf;driver.flush_cb=flush;lv_disp_drv_register(&driver);
  static lv_indev_drv_t input;lv_indev_drv_init(&input);input.type=LV_INDEV_TYPE_POINTER;input.read_cb=pointer_read;lv_indev_drv_register(&input);
  gui_app_init(nullptr,command);save("boot");gui_app_enter_main_ui();gui_app_update_usb(true);gui_app_update_tf(false);
- gui_view_t v{(uint8_t)workflow::Phase::Ready,1,true,false,false,false,100,10,10,0,0};
- render(v,"ready");touch("启动",v);assert(received==GUI_EVENT_STATE_TOGGLE);click("启动");assert(received==GUI_EVENT_STATE_TOGGLE);assert(disabled("停止"));
+ gui_view_t v{(uint8_t)workflow::Phase::Ready,1,true,false,false,false,100,10,10,0,0,0,0};
+ v.motor_turns=7;v.motor_angle=16384;render(v,"ready");assert(find(lv_scr_act(),"7.50"));assert(find(lv_scr_act(),"7 rev / 180.00 deg"));touch("启动",v);assert(received==GUI_EVENT_STATE_TOGGLE);click("启动");assert(received==GUI_EVENT_STATE_TOGGLE);assert(disabled("停止"));
  click("设定转速\n100 RPM · 点击选择");audit(lv_scr_act());save("speed");click("300 RPM");assert(received==GUI_EVENT_SET_SPEED&&value_==300);
  click("目标圈数\n10 圈 · 点击输入");audit(lv_scr_act());save("target");click("清空");click("1");click("2");click("确定");assert(received==GUI_EVENT_SET_COUNT&&value_==12);
  v.phase=(uint8_t)workflow::Phase::Running;v.origin_valid=true;v.displacement=106496;render(v,"running");touch("暂停",v);assert(received==GUI_EVENT_STATE_TOGGLE);touch("停止",v);assert(received==GUI_EVENT_STOP);click("暂停");assert(received==GUI_EVENT_STATE_TOGGLE);click("停止");assert(received==GUI_EVENT_STOP);click("设定转速\n100 RPM · 点击选择");click("停止");assert(received==GUI_EVENT_STOP);assert(disabled("定圈模式"));assert(disabled("正转顺时针"));

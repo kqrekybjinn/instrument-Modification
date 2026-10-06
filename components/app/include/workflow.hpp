@@ -27,6 +27,7 @@ struct State {
     int32_t mileage_start = 0;
     int32_t mileage_now = 0;
     uint8_t motor_fault = 0;
+    uint16_t motor_angle = 0;
 };
 inline bool motion(Phase p) { return p == Phase::Running || p == Phase::Returning; }
 inline int64_t displacement(const State &s) { return s.origin_valid ? s.pos_fixed_now - s.pos_fixed_start : 0; }

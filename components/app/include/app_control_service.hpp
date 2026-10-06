@@ -28,11 +28,9 @@ private:
  SemaphoreHandle_t state_lock_ = nullptr;
  control_state_t state_{}; // Written only by control task after init.
  control_state_t published_{}; // Cross-task snapshot guarded by state_lock_.
- uint16_t previous_angle_ = 0;
- int32_t previous_mileage_ = 0;
- int64_t previous_sample_us_ = 0;
  unsigned diagnostic_samples_ = 0;
  bool final_sample_pending_ = false;
  int16_t sent_rpm10_ = 0;
  int64_t last_motion_us_ = 0;
+ int64_t last_idle_sample_us_ = 0;
 };

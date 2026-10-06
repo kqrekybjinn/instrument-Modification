@@ -25,7 +25,7 @@ typedef struct {
  int16_t target;
  int16_t step;
  int64_t displacement;
- uint8_t motor_fault;
+ uint8_t motor_fault; int32_t motor_turns; uint16_t motor_angle;
 } gui_view_t;
 esp_err_t gui_app_init(SemaphoreHandle_t lock, gui_event_cb_t cb);
 void gui_app_update_boot(uint8_t percent);

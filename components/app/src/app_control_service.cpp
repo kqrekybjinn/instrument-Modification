@@ -54,7 +54,7 @@ void ControlService::publish() {
  xSemaphoreGive(state_lock_);
  gui_view_t view{(uint8_t)state_.phase, state_.mode, state_.feedback_valid,
   state_.origin_valid, state_.reversing, state_.forward_ccw, state_.target_rpm,
-  state_.target_count, state_.count_step, workflow::displacement(state_), state_.motor_fault};
+  state_.target_count, state_.count_step, workflow::displacement(state_), state_.motor_fault, state_.mileage_now, state_.motor_angle};
  gui_app_render(&view);
 }
 bool ControlService::send_speed(int16_t rpm10) {
@@ -65,48 +65,28 @@ bool ControlService::send_speed(int16_t rpm10) {
  return true;
 }
 bool ControlService::refresh_position() {
+ last_idle_sample_us_ = esp_timer_get_time();
  motor_mileage_resp_t response{};
  const auto err = motor_query_mileage(MOTOR_DEFAULT_ID, &response);
  state_.motor_fault = err == ESP_OK ? response.fault_code : state_.motor_fault;
  state_.feedback_valid = err == ESP_OK && response.fault_code == 0 && response.position_raw < 32768;
  if (!state_.feedback_valid) return false;
- const int64_t sample_us = esp_timer_get_time();
- int64_t raw_step = 0;
- if (state_.origin_valid) {
-  raw_step = position_math::angle_step(previous_angle_, response.position_raw);
-  const int64_t elapsed = sample_us - previous_sample_us_;
-  // At <=380 RPM, ordinary <=70ms samples move less than half a turn.
-  // Mileage never contributes to these samples: asynchronous whole-turn updates
-  // cannot create a phantom turn or an early count-mode stop.
-  if (elapsed > 70000 && sent_rpm10_ != 0) {
-   // Long communication gaps cannot be uniquely resolved from one angle.
-   // Use mileage only for recovery when its candidate obeys a physical speed bound.
-   const int64_t candidate = ((int64_t)response.mileage_rotations - previous_mileage_) * 32768
-       + (int32_t)response.position_raw - previous_angle_;
-   const int64_t bound = elapsed * 400 * 32768 / 60000000 + 1024;
-   if (llabs(candidate) <= bound) raw_step = candidate;
-   else ESP_LOGW(TAG, "Ambiguous count gap: mileage inconsistent; whole turns may be lost");
-  }
-  state_.pos_fixed_now += state_.forward_ccw ? -raw_step : raw_step;
- } else {
-  // Each new task starts from a local zero; the motor's integer counter is not origin.
-  state_.pos_fixed_now = 0;
- }
- previous_angle_ = response.position_raw;
- previous_mileage_ = response.mileage_rotations;
- previous_sample_us_ = sample_us;
+ const int64_t position = position_math::oriented_position(response.mileage_rotations, response.position_raw, state_.forward_ccw);
+ state_.pos_fixed_now = position;
  state_.mileage_now = response.mileage_rotations;
+ state_.motor_angle = response.position_raw;
  if (diagnostic_samples_) {
   --diagnostic_samples_;
   ESP_LOGI(TAG, "position mileage=%ld angle=%u origin=%lld now=%lld delta=%lld target=%d phase=%u",
    (long)response.mileage_rotations, (unsigned)response.position_raw,
-   (long long)state_.pos_fixed_start, (long long)state_.pos_fixed_now,
+   (long long)state_.pos_fixed_start, (long long)position,
    (long long)workflow::displacement(state_), state_.target_count, (unsigned)state_.phase);
  }
  return true;
 }
 bool ControlService::should_poll_position() const {
- return workflow::motion(state_.phase) || final_sample_pending_;
+ return workflow::motion(state_.phase) || final_sample_pending_ ||
+  (state_.phase == Phase::Ready && esp_timer_get_time() - last_idle_sample_us_ >= 200000);
 }
 void ControlService::finish_stop(bool emergency) {
  ESP_LOGI(TAG, "Stop phase=%u delta=%lld target=%d", (unsigned)state_.settle_destination, (long long)workflow::displacement(state_), state_.target_count);
@@ -225,10 +205,7 @@ void ControlService::task_loop() {
  int64_t last_poll_us = 0;
  while (true) {
   control_cmd_t cmd{};
-  // Include query duration in the 50ms period rather than sleeping 50ms after each query.
-  const int64_t until_poll = last_poll_us + 50000 - esp_timer_get_time();
-  const int wait_ms = (int)std::max<int64_t>(1, std::min<int64_t>(50, until_poll / 1000));
-  bool got = xQueueReceive(control_q_, &cmd, pdMS_TO_TICKS(wait_ms)) == pdTRUE;
+  bool got = xQueueReceive(control_q_, &cmd, pdMS_TO_TICKS(50)) == pdTRUE;
   // No idle/pause polling and no feedback-driven command loops.
   const int64_t now = esp_timer_get_time();
   // User commands (especially Stop) are handled before waiting for a query.

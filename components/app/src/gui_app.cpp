@@ -146,7 +146,11 @@ void gui_app_render(const gui_view_t *v) {
  if(modal_&&((target_modal_&&!ready)||p==Phase::Settling))close_modal();
  label(mode_,v->mode?"定圈模式":"自由模式");label(direction_,v->forward_ccw?"正转逆时针":"正转顺时针");
  enable(mode_,ready);enable(direction_,ready);
- lv_label_set_text(feedback_,"");
+ char position_text[64];
+ if(v->feedback_valid) snprintf(position_text,sizeof(position_text),"%ld rev / %.2f deg",(long)v->motor_turns,v->motor_angle*360.0/32768);
+ else snprintf(position_text,sizeof(position_text),"POS --");
+ lv_obj_set_style_text_font(feedback_,&lv_font_montserrat_14,0);
+ lv_label_set_text(feedback_,position_text);
  lv_obj_set_style_text_color(feedback_,v->feedback_valid?lv_color_hex(0x69D7B5):amber,0);
  const char *status="准备运行",*help="设置参数后按启动";lv_color_t color=white;
  switch(p) {
@@ -165,9 +169,10 @@ void gui_app_render(const gui_view_t *v) {
  default:break;
  }
  lv_label_set_text(state_label_,status);lv_obj_set_style_text_color(state_label_,color,0);lv_label_set_text(hint_,help);
- int64_t h=v->displacement*100/32768,m=h<0?-h:h;char b[96];
+ const int64_t displayed=ready?(int64_t)v->motor_turns*32768+v->motor_angle:v->displacement;
+ int64_t h=displayed*100/32768,m=h<0?-h:h;char b[96];
  snprintf(b,sizeof(b),"%s%lld.%02lld",h<0?"-":"",(long long)(m/100),(long long)(m%100));lv_label_set_text(count_label_,b);
- snprintf(b,sizeof(b),v->mode?"实际圈数 / 目标 %d 圈":"实际圈数",v->target);lv_label_set_text(target_label_,v->reversing?"距本次起点 · 圈":b);
+ snprintf(b,sizeof(b),v->mode?"实际圈数 / 目标 %d 圈":"实际圈数",v->target);lv_label_set_text(target_label_,ready?"电机位置 · 圈":v->reversing?"距本次起点 · 圈":b);
  if(v->mode){lv_obj_clear_flag(progress_,LV_OBJ_FLAG_HIDDEN);int64_t value=v->target>0?v->displacement*1000/(v->target*32768LL):0;lv_bar_set_value(progress_,value<0?0:value>1000?1000:value,LV_ANIM_OFF);}else lv_obj_add_flag(progress_,LV_OBJ_FLAG_HIDDEN);
  snprintf(b,sizeof(b),"设定转速\n%d RPM · 点击选择",v->rpm);label(speed_,b);enable(speed_,true);
  snprintf(b,sizeof(b),v->mode?"目标圈数\n%d 圈 · 点击输入":"自由运行\n无目标圈数",v->target);if(v->mode&&!ready){snprintf(b,sizeof(b),"目标圈数\n%d 圈 · 本次已锁定",v->target);}
