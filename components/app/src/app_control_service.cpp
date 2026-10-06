@@ -70,14 +70,37 @@ bool ControlService::refresh_position() {
  state_.motor_fault = err == ESP_OK ? response.fault_code : state_.motor_fault;
  state_.feedback_valid = err == ESP_OK && response.fault_code == 0 && response.position_raw < 32768;
  if (!state_.feedback_valid) return false;
- const int64_t position = position_math::oriented_position(response.mileage_rotations, response.position_raw, state_.forward_ccw);
- state_.pos_fixed_now = position;
+ const int64_t sample_us = esp_timer_get_time();
+ int64_t raw_step = 0;
+ if (state_.origin_valid) {
+  raw_step = position_math::angle_step(previous_angle_, response.position_raw);
+  const int64_t elapsed = sample_us - previous_sample_us_;
+  // At <=380 RPM, ordinary <=70ms samples move less than half a turn.
+  // Mileage never contributes to these samples: asynchronous whole-turn updates
+  // cannot create a phantom turn or an early count-mode stop.
+  if (elapsed > 70000 && sent_rpm10_ != 0) {
+   // Long communication gaps cannot be uniquely resolved from one angle.
+   // Use mileage only for recovery when its candidate obeys a physical speed bound.
+   const int64_t candidate = ((int64_t)response.mileage_rotations - previous_mileage_) * 32768
+       + (int32_t)response.position_raw - previous_angle_;
+   const int64_t bound = elapsed * 400 * 32768 / 60000000 + 1024;
+   if (llabs(candidate) <= bound) raw_step = candidate;
+   else ESP_LOGW(TAG, "Ambiguous count gap: mileage inconsistent; whole turns may be lost");
+  }
+  state_.pos_fixed_now += state_.forward_ccw ? -raw_step : raw_step;
+ } else {
+  // Each new task starts from a local zero; the motor's integer counter is not origin.
+  state_.pos_fixed_now = 0;
+ }
+ previous_angle_ = response.position_raw;
+ previous_mileage_ = response.mileage_rotations;
+ previous_sample_us_ = sample_us;
  state_.mileage_now = response.mileage_rotations;
  if (diagnostic_samples_) {
   --diagnostic_samples_;
   ESP_LOGI(TAG, "position mileage=%ld angle=%u origin=%lld now=%lld delta=%lld target=%d phase=%u",
    (long)response.mileage_rotations, (unsigned)response.position_raw,
-   (long long)state_.pos_fixed_start, (long long)position,
+   (long long)state_.pos_fixed_start, (long long)state_.pos_fixed_now,
    (long long)workflow::displacement(state_), state_.target_count, (unsigned)state_.phase);
  }
  return true;
@@ -202,7 +225,10 @@ void ControlService::task_loop() {
  int64_t last_poll_us = 0;
  while (true) {
   control_cmd_t cmd{};
-  bool got = xQueueReceive(control_q_, &cmd, pdMS_TO_TICKS(50)) == pdTRUE;
+  // Include query duration in the 50ms period rather than sleeping 50ms after each query.
+  const int64_t until_poll = last_poll_us + 50000 - esp_timer_get_time();
+  const int wait_ms = (int)std::max<int64_t>(1, std::min<int64_t>(50, until_poll / 1000));
+  bool got = xQueueReceive(control_q_, &cmd, pdMS_TO_TICKS(wait_ms)) == pdTRUE;
   // No idle/pause polling and no feedback-driven command loops.
   const int64_t now = esp_timer_get_time();
   // User commands (especially Stop) are handled before waiting for a query.
