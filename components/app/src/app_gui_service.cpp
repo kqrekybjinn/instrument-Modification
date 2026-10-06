@@ -15,10 +15,10 @@ static const char *TAG = "APP";
 
 // Provide defaults when sdkconfig does not define panel resolution
 #ifndef CONFIG_LCD_H_RES
-#define CONFIG_LCD_H_RES 480
+#define CONFIG_LCD_H_RES 320
 #endif
 #ifndef CONFIG_LCD_V_RES
-#define CONFIG_LCD_V_RES 272
+#define CONFIG_LCD_V_RES 480
 #endif
 
 GuiService::GuiService(gui_event_cb_t cb) : event_cb_(cb) {}

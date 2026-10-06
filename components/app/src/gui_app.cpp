@@ -1,678 +1,198 @@
 #include "gui_app.h"
-
-#include <stdint.h>
+#include "workflow.hpp"
 #include <stdio.h>
 #include <string.h>
-
-#include "esp_log.h"
-
+#include <initializer_list>
 LV_FONT_DECLARE(lv_font_modi_16_cjk);
-
-static const char *TAG = "GUI";
-
-static SemaphoreHandle_t s_lvgl_lock = NULL;
-static gui_event_cb_t s_evt_cb = NULL;
-
-static lv_obj_t *s_lbl_mode = NULL;
-static lv_obj_t *s_lbl_usb = NULL;
-static lv_obj_t *s_lbl_tf = NULL;
-static lv_obj_t *s_lbl_state = NULL;
-static lv_obj_t *s_lbl_run_time = NULL;
-static lv_obj_t *s_lbl_rpm = NULL;
-static lv_obj_t *s_btn_mode = NULL;
-static lv_obj_t *s_btn_mode_label = NULL;
-static lv_obj_t *s_btn_dir = NULL;
-static lv_obj_t *s_btn_dir_label = NULL;
-static lv_obj_t *s_btn_speed = NULL;
-static lv_obj_t *s_btn_state = NULL;
-static lv_obj_t *s_btn_speed_label = NULL;
-static lv_obj_t *s_btn_state_label = NULL;
-
-// Count-mode widgets
-static lv_obj_t *s_lbl_count = NULL;
-static lv_obj_t *s_btn_count_dec = NULL;
-static lv_obj_t *s_btn_count_step = NULL;
-static lv_obj_t *s_btn_count_step_label = NULL;
-static lv_obj_t *s_btn_count_inc = NULL;
-static lv_obj_t *s_count_btn_row = NULL;
-
-static lv_obj_t *s_boot_lbl = NULL;
-static lv_obj_t *s_boot_bar = NULL;
-
-static const lv_font_t *pick_text_font(void)
-{
-    return &lv_font_modi_16_cjk;
+using workflow::Phase;
+static SemaphoreHandle_t lock_;
+static gui_event_cb_t callback_;
+static gui_view_t view_{};
+static bool built_;
+static lv_obj_t *boot_label_, *boot_bar_, *mode_, *direction_, *feedback_, *usb_, *tf_;
+static lv_obj_t *state_label_, *count_label_, *target_label_, *hint_, *progress_, *speed_, *target_;
+static lv_obj_t *minus_, *plus_, *step_, *primary_, *secondary_, *third_, *key_hint_;
+static lv_obj_t *modal_, *entry_, *error_;
+static bool target_modal_;
+static const auto bg = lv_color_hex(0x101B27), panel = lv_color_hex(0x1C2A38);
+static const auto white = lv_color_hex(0xF1F5F9), muted = lv_color_hex(0xA9BBCB), border = lv_color_hex(0x35495B);
+static const auto blue = lv_color_hex(0x2878C8), green = lv_color_hex(0x16866A), red = lv_color_hex(0xB93D45), amber = lv_color_hex(0xE8B459);
+static bool take() { return !lock_ || xSemaphoreTakeRecursive(lock_, pdMS_TO_TICKS(50)) == pdTRUE; }
+static void give() { if (lock_) xSemaphoreGiveRecursive(lock_); }
+static void enable(lv_obj_t *o, bool value) { if(value) lv_obj_clear_state(o,LV_STATE_DISABLED); else lv_obj_add_state(o,LV_STATE_DISABLED); }
+static void label(lv_obj_t *o, const char *text) { lv_label_set_text(lv_obj_get_child(o,0),text); }
+static void emit(gui_event_t event,int16_t value=0) { if(callback_) callback_(event,value); }
+static void place(lv_obj_t *o,int x,int y,int w,int h) { lv_obj_set_pos(o,x,y);lv_obj_set_size(o,w,h);lv_obj_clear_flag(o,LV_OBJ_FLAG_SCROLLABLE); if(lv_obj_check_type(o,&lv_btn_class)&&lv_obj_get_child_cnt(o)>0){auto l=lv_obj_get_child(o,0);lv_obj_set_width(l,w-8);lv_obj_center(l);} }
+static lv_obj_t *text(lv_obj_t *parent,const char *value,int x,int y,int w,const lv_font_t *font=&lv_font_modi_16_cjk,lv_color_t color=white) {
+ auto o=lv_label_create(parent); lv_obj_set_pos(o,x,y);lv_obj_set_width(o,w);lv_label_set_text(o,value);
+ lv_obj_set_style_text_font(o,font,0);lv_obj_set_style_text_color(o,color,0);return o;
 }
-
-/* ---- Dark industrial color palette ---- */
-static const lv_color_t k_bg      = lv_color_hex(0x0f1923);
-static const lv_color_t k_card_bg = lv_color_hex(0x1a2332);
-static const lv_color_t k_text    = lv_color_hex(0xe2e8f0);
-static const lv_color_t k_muted   = lv_color_hex(0x94a3b8);
-static const lv_color_t k_border  = lv_color_hex(0x2a3a4a);
-static const lv_color_t k_green   = lv_color_hex(0x22c55e);
-static const lv_color_t k_red     = lv_color_hex(0xef4444);
-static const lv_color_t k_blue    = lv_color_hex(0x3b82f6);
-static const lv_color_t k_amber   = lv_color_hex(0xf59e0b);
-
-static lv_style_transition_dsc_t *btn_transition(void)
-{
-    static lv_style_transition_dsc_t s_trans;
-    static bool s_inited = false;
-    static const lv_style_prop_t props[] = {LV_STYLE_TRANSFORM_ZOOM, LV_STYLE_PROP_INV};
-
-    if (!s_inited) {
-        lv_style_transition_dsc_init(&s_trans, props, lv_anim_path_ease_out, 100, 0, NULL);
-        s_inited = true;
-    }
-    return &s_trans;
+static void direct(lv_event_t *event) {
+ uintptr_t payload=(uintptr_t)lv_event_get_user_data(event);
+ emit((gui_event_t)(payload&255),(int16_t)(payload>>8));
 }
-
-static bool lv_lock(void)
-{
-    if (!s_lvgl_lock) {
-        return true;
-    }
-    return xSemaphoreTakeRecursive(s_lvgl_lock, pdMS_TO_TICKS(50)) == pdTRUE;
+static lv_obj_t *button(lv_obj_t *parent,const char *value,int x,int y,int w,int h,lv_color_t color,lv_event_cb_t cb,uintptr_t payload=0) {
+ auto o=lv_btn_create(parent);place(o,x,y,w,h);
+ lv_obj_set_style_radius(o,7,0);lv_obj_set_style_border_width(o,0,0);lv_obj_set_style_shadow_width(o,0,0);
+ lv_obj_set_style_bg_color(o,color,0);lv_obj_set_style_bg_opa(o,LV_OPA_100,0);lv_obj_set_style_bg_opa(o,LV_OPA_40,LV_STATE_DISABLED);
+ lv_obj_set_style_pad_all(o,4,0);lv_obj_set_style_bg_opa(o,LV_OPA_70,LV_STATE_PRESSED);
+ auto l=lv_label_create(o);lv_label_set_text(l,value);lv_obj_set_width(l,w-8);lv_obj_set_style_text_align(l,LV_TEXT_ALIGN_CENTER,0);
+ lv_obj_set_style_text_font(l,&lv_font_modi_16_cjk,0);lv_obj_set_style_text_color(l,white,0);lv_obj_center(l);
+ lv_obj_add_event_cb(o,cb,LV_EVENT_CLICKED,(void*)payload);return o;
 }
-
-static void lv_unlock(void)
-{
-    if (s_lvgl_lock) {
-        xSemaphoreGiveRecursive(s_lvgl_lock);
-    }
+static lv_obj_t *card(lv_obj_t *parent,int x,int y,int w,int h) {
+ auto o=lv_obj_create(parent);place(o,x,y,w,h);lv_obj_set_style_pad_all(o,0,0);
+ lv_obj_set_style_bg_color(o,panel,0);lv_obj_set_style_border_width(o,1,0);lv_obj_set_style_border_color(o,border,0);lv_obj_set_style_radius(o,9,0);return o;
 }
-
-static void send_evt(gui_event_t evt)
-{
-    if (s_evt_cb) {
-        s_evt_cb(evt);
-    }
+static void close_modal() { if(modal_) {lv_obj_del(modal_);modal_=nullptr;entry_=nullptr;error_=nullptr;} }
+static void cancel_modal(lv_event_t*) {close_modal();}
+static void modal_stop(lv_event_t*) {emit(GUI_EVENT_STOP);close_modal();}
+static void pick_speed(lv_event_t *event) { emit(GUI_EVENT_SET_SPEED,(int16_t)(uintptr_t)lv_event_get_user_data(event));close_modal(); }
+static void show_speed(lv_event_t*) {
+ close_modal();target_modal_=false;
+ modal_=lv_obj_create(lv_scr_act());place(modal_,0,0,lv_disp_get_hor_res(nullptr),lv_disp_get_ver_res(nullptr));
+ lv_obj_set_style_bg_color(modal_,bg,0);lv_obj_set_style_bg_opa(modal_,LV_OPA_100,0);lv_obj_set_style_pad_all(modal_,0,0);lv_obj_set_style_border_width(modal_,0,0);
+ text(modal_,"选择设定转速",18,16,300);
+ const int values[]={50,100,200,300,380};
+ for(int i=0;i<5;i++) {char b[32];snprintf(b,sizeof(b),"%d RPM%s",values[i],values[i]==view_.rpm?" · 当前":"");
+  button(modal_,b,18+(i%3)*148,58+(i/3)*66,136,54,values[i]==view_.rpm?blue:panel,pick_speed,values[i]);}
+ text(modal_,"运行及暂停时均可调整，平滑切换",18,210,440,&lv_font_modi_16_cjk,muted);
+ button(modal_,"返回",18,258,292,44,border,cancel_modal);
+ auto stop=button(modal_,"停止",320,258,142,44,red,modal_stop);
+ enable(stop,view_.phase!=(uint8_t)Phase::Ready);
 }
-
-static void button_evt_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
-        return;
-    }
-    gui_event_t evt = (gui_event_t)(uintptr_t)lv_event_get_user_data(e);
-    send_evt(evt);
+static void input_key(lv_event_t *event) {
+ char key=(char)(uintptr_t)lv_event_get_user_data(event);
+ const char *current=lv_textarea_get_text(entry_);
+ if(key=='<') lv_textarea_del_char(entry_);
+ else if(key=='C') lv_textarea_set_text(entry_,"");
+ else if(strlen(current)<4) {char b[]={key,0};lv_textarea_add_text(entry_,b);}
+ if(error_) lv_label_set_text(error_,"");
 }
-
-static lv_obj_t *make_button(lv_obj_t *parent, const char *txt, lv_color_t color, gui_event_t evt)
-{
-    lv_obj_t *btn = lv_btn_create(parent);
-    lv_obj_set_height(btn, 60);
-    lv_obj_set_style_bg_color(btn, color, 0);
-    lv_obj_set_style_radius(btn, 12, 0);
-    lv_obj_set_style_border_width(btn, 0, 0);
-    lv_obj_set_style_shadow_width(btn, 0, 0);
-
-    lv_obj_set_style_transition(btn, btn_transition(), 0);
-    lv_obj_set_style_transform_zoom(btn, 256, 0);
-    lv_obj_set_style_transform_zoom(btn, 240, LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_80, LV_STATE_PRESSED);
-
-    lv_obj_set_style_bg_opa(btn, LV_OPA_40, LV_STATE_DISABLED);
-    lv_obj_add_event_cb(btn, button_evt_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)evt);
-
-    lv_obj_t *label = lv_label_create(btn);
-    lv_label_set_text(label, txt);
-    lv_obj_set_style_text_font(label, pick_text_font(), 0);
-    lv_obj_set_style_text_color(label, lv_color_hex(0xffffff), 0);
-    lv_obj_center(label);
-    return btn;
+static void apply_count(lv_event_t*) {
+ const char *value=lv_textarea_get_text(entry_);int count=0;
+ for(const char *p=value;*p;p++) count=count*10+(*p-'0');
+ if(count<1||count>9999) {lv_label_set_text(error_,"请输入 1-9999 圈");return;}
+ emit(GUI_EVENT_SET_COUNT,count);close_modal();
 }
-
-static void reset_main_widgets(void)
-{
-    s_lbl_mode = NULL;
-    s_lbl_usb = NULL;
-    s_lbl_tf = NULL;
-    s_lbl_state = NULL;
-    s_lbl_run_time = NULL;
-    s_lbl_rpm = NULL;
-    s_btn_mode = NULL;
-    s_btn_mode_label = NULL;
-    s_btn_dir = NULL;
-    s_btn_dir_label = NULL;
-    s_btn_speed = NULL;
-    s_btn_state = NULL;
-    s_btn_speed_label = NULL;
-    s_btn_state_label = NULL;
-    s_lbl_count = NULL;
-    s_btn_count_dec = NULL;
-    s_btn_count_step = NULL;
-    s_btn_count_step_label = NULL;
-    s_btn_count_inc = NULL;
-    s_count_btn_row = NULL;
+static void show_target(lv_event_t*) {
+ if(view_.phase==(uint8_t)Phase::FeedbackLost && view_.feedback_valid && view_.origin_valid && view_.displacement>0){emit(GUI_EVENT_RETURN);return;}
+ if(view_.phase!=(uint8_t)Phase::Ready || view_.origin_valid)return;
+ close_modal();target_modal_=true;
+ modal_=lv_obj_create(lv_scr_act());place(modal_,0,0,480,320);lv_obj_set_style_pad_all(modal_,0,0);
+ lv_obj_set_style_bg_color(modal_,bg,0);lv_obj_set_style_border_width(modal_,0,0);
+ text(modal_,"目标圈数",16,14,210);text(modal_,"整数 · 1-9999 圈",16,43,220,&lv_font_modi_16_cjk,muted);
+ entry_=lv_textarea_create(modal_);place(entry_,16,78,196,54);lv_textarea_set_one_line(entry_,true);
+ lv_textarea_set_max_length(entry_,4);lv_textarea_set_accepted_chars(entry_,"0123456789");
+ lv_obj_set_style_text_font(entry_,&lv_font_montserrat_20,0);char b[12];snprintf(b,sizeof(b),"%d",view_.target);lv_textarea_set_text(entry_,b);
+ error_=text(modal_,"",16,146,214,&lv_font_modi_16_cjk,amber);
+ button(modal_,"取消",16,248,92,54,border,cancel_modal);
+ button(modal_,"确定",120,248,92,54,green,apply_count);
+ const char keys[]="123456789C0<";
+ for(int i=0;i<12;i++) {char b[8]={keys[i],0};if(keys[i]=='C')strcpy(b,"清空");if(keys[i]=='<')strcpy(b,"删除");
+  button(modal_,b,238+(i%3)*76,14+(i/3)*74,66,64,panel,input_key,keys[i]);}
 }
-
-static void reset_boot_widgets(void)
-{
-    s_boot_lbl = NULL;
-    s_boot_bar = NULL;
+static void primary_click(lv_event_t*) {
+ const auto p=(Phase)view_.phase;
+ emit(p==Phase::Stopped||p==Phase::Complete||p==Phase::ReturnStopped||p==Phase::OriginLost?GUI_EVENT_NEW_RUN:GUI_EVENT_STATE_TOGGLE);
 }
-
-static void build_boot_layout(void)
-{
-    lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, k_bg, 0);
-    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_layout(scr, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(scr, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_all(scr, 24, 0);
-    lv_obj_set_style_pad_gap(scr, 20, 0);
-
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, "MODI");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_48, 0);
-    lv_obj_set_style_text_color(title, k_text, 0);
-
-    s_boot_lbl = lv_label_create(scr);
-    lv_label_set_text(s_boot_lbl, "电机初始化中 0%");
-    lv_obj_set_style_text_font(s_boot_lbl, pick_text_font(), 0);
-    lv_obj_set_style_text_color(s_boot_lbl, k_muted, 0);
-
-    s_boot_bar = lv_bar_create(scr);
-    lv_obj_set_width(s_boot_bar, LV_PCT(60));
-    lv_obj_set_height(s_boot_bar, 6);
-    lv_bar_set_range(s_boot_bar, 0, 100);
-    lv_bar_set_value(s_boot_bar, 0, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(s_boot_bar, k_border, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_boot_bar, LV_OPA_100, LV_PART_MAIN);
-    lv_obj_set_style_radius(s_boot_bar, 3, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_boot_bar, k_blue, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(s_boot_bar, 3, LV_PART_INDICATOR);
+static void secondary_click(lv_event_t*) {
+ const auto p=(Phase)view_.phase;
+ emit(p==Phase::Stopped||p==Phase::Complete||p==Phase::ReturnStopped?GUI_EVENT_RETURN:GUI_EVENT_STOP);
 }
-
-static void build_layout(void)
-{
-    lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, k_bg, 0);
-    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_layout(scr, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(scr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_all(scr, 10, 0);
-    lv_obj_set_style_pad_gap(scr, 8, 0);
-
-    /* ---- Top status bar ---- */
-    lv_obj_t *topbar = lv_obj_create(scr);
-    lv_obj_remove_style_all(topbar);
-    lv_obj_set_size(topbar, LV_PCT(100), 48);
-    lv_obj_set_layout(topbar, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(topbar, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(topbar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_clear_flag(topbar, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *top_ctrls = lv_obj_create(topbar);
-    lv_obj_remove_style_all(top_ctrls);
-    lv_obj_set_size(top_ctrls, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_layout(top_ctrls, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(top_ctrls, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(top_ctrls, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_gap(top_ctrls, 8, 0);
-    lv_obj_clear_flag(top_ctrls, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* Mode toggle button */
-    s_btn_mode = lv_btn_create(top_ctrls);
-    lv_obj_set_size(s_btn_mode, LV_SIZE_CONTENT, 40);
-    lv_obj_set_style_bg_color(s_btn_mode, k_border, 0);
-    lv_obj_set_style_radius(s_btn_mode, 6, 0);
-    lv_obj_set_style_border_width(s_btn_mode, 0, 0);
-    lv_obj_set_style_shadow_width(s_btn_mode, 0, 0);
-    lv_obj_set_style_pad_hor(s_btn_mode, 12, 0);
-    lv_obj_set_style_pad_ver(s_btn_mode, 8, 0);
-    lv_obj_set_style_bg_opa(s_btn_mode, LV_OPA_40, LV_STATE_DISABLED);
-    lv_obj_add_event_cb(s_btn_mode, button_evt_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)GUI_EVENT_MODE_SWITCH);
-
-    s_btn_mode_label = lv_label_create(s_btn_mode);
-    lv_label_set_text(s_btn_mode_label, "计时模式");
-    lv_obj_set_style_text_font(s_btn_mode_label, pick_text_font(), 0);
-    lv_obj_set_style_text_color(s_btn_mode_label, k_text, 0);
-    lv_obj_center(s_btn_mode_label);
-
-    /* Forward direction button (CW/CCW) */
-    s_btn_dir = lv_btn_create(top_ctrls);
-    lv_obj_set_size(s_btn_dir, LV_SIZE_CONTENT, 40);
-    lv_obj_set_style_bg_color(s_btn_dir, k_border, 0);
-    lv_obj_set_style_radius(s_btn_dir, 6, 0);
-    lv_obj_set_style_border_width(s_btn_dir, 0, 0);
-    lv_obj_set_style_shadow_width(s_btn_dir, 0, 0);
-    lv_obj_set_style_pad_hor(s_btn_dir, 12, 0);
-    lv_obj_set_style_pad_ver(s_btn_dir, 8, 0);
-    lv_obj_set_style_bg_opa(s_btn_dir, LV_OPA_40, LV_STATE_DISABLED);
-    lv_obj_add_event_cb(s_btn_dir, button_evt_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)GUI_EVENT_FORWARD_DIR_TOGGLE);
-
-    s_btn_dir_label = lv_label_create(s_btn_dir);
-    lv_label_set_text(s_btn_dir_label, "正转顺时");
-    lv_obj_set_style_text_font(s_btn_dir_label, pick_text_font(), 0);
-    lv_obj_set_style_text_color(s_btn_dir_label, k_text, 0);
-    lv_obj_center(s_btn_dir_label);
-
-    lv_obj_t *indicators = lv_obj_create(topbar);
-    lv_obj_remove_style_all(indicators);
-    lv_obj_set_size(indicators, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_layout(indicators, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(indicators, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_gap(indicators, 14, 0);
-    lv_obj_clear_flag(indicators, LV_OBJ_FLAG_SCROLLABLE);
-
-    s_lbl_usb = lv_label_create(indicators);
-    lv_label_set_text(s_lbl_usb, LV_SYMBOL_USB " --");
-    lv_obj_set_style_text_color(s_lbl_usb, k_muted, 0);
-    lv_obj_set_style_text_font(s_lbl_usb, &lv_font_montserrat_14, 0);
-
-    s_lbl_tf = lv_label_create(indicators);
-    lv_label_set_text(s_lbl_tf, LV_SYMBOL_SD_CARD " --");
-    lv_obj_set_style_text_color(s_lbl_tf, k_muted, 0);
-    lv_obj_set_style_text_font(s_lbl_tf, &lv_font_montserrat_14, 0);
-
-    /* ---- Main content card ---- */
-    lv_obj_t *card = lv_obj_create(scr);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_width(card, LV_PCT(100));
-    lv_obj_set_flex_grow(card, 1);
-    lv_obj_set_style_bg_color(card, k_card_bg, 0);
-    lv_obj_set_style_radius(card, 16, 0);
-    lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_border_color(card, k_border, 0);
-    lv_obj_set_style_shadow_width(card, 0, 0);
-    lv_obj_set_style_pad_all(card, 12, 0);
-    lv_obj_set_layout(card, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    s_lbl_state = lv_label_create(card);
-    lv_label_set_text(s_lbl_state, "\xE5\x81\x9C\xE6\xAD\xA2");
-    lv_obj_set_style_text_font(s_lbl_state, pick_text_font(), 0);
-    lv_obj_set_style_text_color(s_lbl_state, k_muted, 0);
-
-    s_lbl_run_time = lv_label_create(card);
-    lv_label_set_text(s_lbl_run_time, "00:00.00");
-    lv_obj_set_style_text_color(s_lbl_run_time, k_text, 0);
-    lv_obj_set_style_text_font(s_lbl_run_time, &lv_font_montserrat_48, 0);
-
-    /* Rotation count label (count mode only, hidden by default) */
-    s_lbl_count = lv_label_create(card);
-    lv_label_set_text(s_lbl_count, "0/100");
-    lv_obj_set_style_text_color(s_lbl_count, k_text, 0);
-    lv_obj_set_style_text_font(s_lbl_count, &lv_font_montserrat_48, 0);
-    lv_obj_add_flag(s_lbl_count, LV_OBJ_FLAG_HIDDEN);
-
-    s_lbl_rpm = lv_label_create(card);
-    lv_label_set_text(s_lbl_rpm, "0 RPM");
-    lv_obj_set_style_text_color(s_lbl_rpm, k_muted, 0);
-    lv_obj_set_style_text_font(s_lbl_rpm, &lv_font_montserrat_20, 0);
-
-    /* Count adjust buttons row (count mode only, hidden by default) */
-    s_count_btn_row = lv_obj_create(card);
-    lv_obj_remove_style_all(s_count_btn_row);
-    lv_obj_set_width(s_count_btn_row, LV_PCT(60));
-    lv_obj_set_height(s_count_btn_row, LV_SIZE_CONTENT);
-    lv_obj_set_layout(s_count_btn_row, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(s_count_btn_row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(s_count_btn_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_gap(s_count_btn_row, 20, 0);
-    lv_obj_clear_flag(s_count_btn_row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(s_count_btn_row, LV_OBJ_FLAG_HIDDEN);
-
-    s_btn_count_dec  = make_button(s_count_btn_row, LV_SYMBOL_MINUS, k_border, GUI_EVENT_COUNT_DEC);
-    s_btn_count_step = make_button(s_count_btn_row, "x10", k_blue, GUI_EVENT_COUNT_STEP_TOGGLE);
-    s_btn_count_inc  = make_button(s_count_btn_row, LV_SYMBOL_PLUS, k_border, GUI_EVENT_COUNT_INC);
-    lv_obj_set_size(s_btn_count_dec, 64, 40);
-    lv_obj_set_size(s_btn_count_step, 64, 40);
-    lv_obj_set_size(s_btn_count_inc, 64, 40);
-    s_btn_count_step_label = lv_obj_get_child(s_btn_count_step, 0);
-
-    /* ---- Bottom buttons ---- */
-    lv_obj_t *btn_panel = lv_obj_create(scr);
-    lv_obj_remove_style_all(btn_panel);
-    lv_obj_set_width(btn_panel, LV_PCT(100));
-    lv_obj_set_layout(btn_panel, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(btn_panel, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_gap(btn_panel, 10, 0);
-    lv_obj_clear_flag(btn_panel, LV_OBJ_FLAG_SCROLLABLE);
-
-    s_btn_speed = make_button(btn_panel, "Speed 60", k_blue, GUI_EVENT_SPEED_STEP);
-    s_btn_state = make_button(btn_panel, "Start", k_green, GUI_EVENT_STATE_TOGGLE);
-    s_btn_speed_label = lv_obj_get_child(s_btn_speed, 0);
-    s_btn_state_label = lv_obj_get_child(s_btn_state, 0);
-
-    lv_obj_set_flex_grow(s_btn_speed, 1);
-    lv_obj_set_flex_grow(s_btn_state, 1);
-    lv_obj_set_height(s_btn_speed, 72);
-    lv_obj_set_height(s_btn_state, 72);
+static void third_click(lv_event_t*) {emit(GUI_EVENT_NEW_RUN);}
+static void build() {
+ lv_obj_t *screen=lv_scr_act();lv_obj_clean(screen);lv_obj_set_style_bg_color(screen,bg,0);lv_obj_set_style_pad_all(screen,0,0);lv_obj_clear_flag(screen,LV_OBJ_FLAG_SCROLLABLE);
+ text(screen,"MODI",12,12,80,&lv_font_montserrat_20);
+ feedback_=text(screen,"等待反馈",92,13,166,&lv_font_modi_16_cjk,muted);
+ mode_=button(screen,"自由模式",272,7,94,32,border,direct,GUI_EVENT_MODE_SWITCH);
+ direction_=button(screen,"正转顺时针",374,7,94,32,border,direct,GUI_EVENT_FORWARD_DIR_TOGGLE);
+ auto left=card(screen,12,48,252,212);
+ state_label_=text(left,"准备运行",14,12,224);
+ count_label_=text(left,"0.00",14,48,224,&lv_font_montserrat_48);
+ target_label_=text(left,"实际圈数",14,109,224,&lv_font_modi_16_cjk,muted);
+ progress_=lv_bar_create(left);place(progress_,14,139,224,5);lv_bar_set_range(progress_,0,1000);
+ lv_obj_set_style_bg_color(progress_,border,LV_PART_MAIN);lv_obj_set_style_bg_color(progress_,blue,LV_PART_INDICATOR);
+ hint_=text(left,"设置参数后按启动",14,150,224,&lv_font_modi_16_cjk,muted);
+ speed_=button(screen,"设定转速\n100 RPM",272,48,196,66,panel,show_speed);
+ target_=button(screen,"目标圈数\n100 圈",272,122,196,66,panel,show_target);
+ minus_=button(screen,"-",272,196,58,40,border,direct,GUI_EVENT_COUNT_DEC);
+ step_=button(screen,"±10",337,196,66,40,border,direct,GUI_EVENT_COUNT_STEP_TOGGLE);
+ plus_=button(screen,"+",410,196,58,40,border,direct,GUI_EVENT_COUNT_INC);
+ key_hint_=text(screen,"按键1 启动/暂停  ·  按键2 停止",272,240,196,&lv_font_modi_16_cjk,muted);
+ lv_obj_set_style_text_font(key_hint_,&lv_font_modi_16_cjk,0);
+ primary_=button(screen,"启动",12,268,252,40,green,primary_click);
+ secondary_=button(screen,"停止",272,268,196,40,red,secondary_click);
+ third_=button(screen,"新运行",368,268,100,40,border,third_click);lv_obj_add_flag(third_,LV_OBJ_FLAG_HIDDEN);
+ usb_=text(screen,"USB --",12,311,130,&lv_font_montserrat_14,muted);
+ tf_=text(screen,"TF --",140,311,130,&lv_font_montserrat_14,muted);
+ // Storage indicators share a compact line in the main card to keep all controls inside 320px.
+ lv_obj_set_pos(usb_,26,238);lv_obj_set_pos(tf_,146,238);
+ built_=true;
 }
-
-esp_err_t gui_app_init(SemaphoreHandle_t lvgl_lock, gui_event_cb_t cb)
-{
-    s_lvgl_lock = lvgl_lock;
-    s_evt_cb = cb;
-
-    if (!lv_lock()) {
-        ESP_LOGE(TAG, "LVGL lock failed at init");
-        return ESP_FAIL;
-    }
-
-    lv_obj_clean(lv_scr_act());
-    reset_main_widgets();
-    reset_boot_widgets();
-    build_boot_layout();
-    ESP_LOGI(TAG, "LVGL display res: %dx%d", lv_disp_get_hor_res(NULL), lv_disp_get_ver_res(NULL));
-    lv_unlock();
-    return ESP_OK;
+esp_err_t gui_app_init(SemaphoreHandle_t lock,gui_event_cb_t cb) {
+ lock_=lock;callback_=cb;built_=false;
+ if(!take())return ESP_FAIL;
+ auto screen=lv_scr_act();lv_obj_clean(screen);lv_obj_set_style_bg_color(screen,bg,0);lv_obj_clear_flag(screen,LV_OBJ_FLAG_SCROLLABLE);
+ text(screen,"MODI",32,70,400,&lv_font_montserrat_48);
+ boot_label_=text(screen,"电机初始化中",32,142,400);
+ boot_bar_=lv_bar_create(screen);place(boot_bar_,32,188,416,6);lv_bar_set_range(boot_bar_,0,100);give();return ESP_OK;
 }
-
-void gui_app_update_boot(uint8_t percent)
-{
-    if (percent > 100) percent = 100;
-    if (!lv_lock()) return;
-    if (s_boot_bar) {
-        lv_bar_set_value(s_boot_bar, percent, LV_ANIM_OFF);
-    }
-    if (s_boot_lbl) {
-        char buf[48];
-        snprintf(buf, sizeof(buf), "电机初始化中 %u%%", (unsigned)percent);
-        lv_label_set_text(s_boot_lbl, buf);
-    }
-    lv_unlock();
+void gui_app_update_boot(uint8_t p) {if(!take())return;if(!built_&&boot_bar_)lv_bar_set_value(boot_bar_,p,LV_ANIM_OFF);give();}
+void gui_app_enter_main_ui() {if(!take())return;boot_label_=nullptr;boot_bar_=nullptr;build();give();}
+void gui_app_render(const gui_view_t *v) {
+ if(!v||!take())return;
+ view_=*v;if(!built_){give();return;}
+ const auto p=(Phase)v->phase;const bool ready=p==Phase::Ready&&!v->origin_valid;
+ const bool result=p==Phase::Stopped||p==Phase::Complete||p==Phase::ReturnStopped;
+ const bool lost=p==Phase::FeedbackLost;const bool moving=workflow::motion(p);
+ if(modal_&&((target_modal_&&!ready)||p==Phase::Settling||p==Phase::OriginLost))close_modal();
+ label(mode_,v->mode?"定圈模式":"自由模式");label(direction_,v->forward_ccw?"正转逆时针":"正转顺时针");
+ enable(mode_,ready);enable(direction_,ready);
+ lv_label_set_text(feedback_,p==Phase::OriginLost?"起点失效":v->motor_fault?"电机故障":v->feedback_valid?"反馈正常":"反馈未确认");
+ lv_obj_set_style_text_color(feedback_,v->feedback_valid?lv_color_hex(0x69D7B5):amber,0);
+ const char *status="准备运行",*help="设置参数后按启动";lv_color_t color=white;
+ switch(p) {
+ case Phase::Running:status="正转运行";help="暂停可继续，停止结束任务";color=lv_color_hex(0x69D7B5);break;
+ case Phase::Paused:status="已暂停";help="继续剩余行程，或停止结束";color=amber;break;
+ case Phase::Stopped:status="本次已停止";help="保留起点，可新运行或回位";break;
+ case Phase::Complete:
+  if(v->mode && (v->displacement-(int64_t)v->target*32768>16384 || v->displacement-(int64_t)v->target*32768 < -16384)) {
+   status="已停止 · 超出容差";help="误差超过半圈，请检查运行结果";color=amber;
+  }else {status="本次已完成";help="保留实际圈数，可新运行或回位";color=lv_color_hex(0x69D7B5);}
+  break;
+ case Phase::Returning:status="反转回位";help="圈数回到零；可暂停或停止";color=amber;break;
+ case Phase::ReturnPaused:status="回位已暂停";help="继续回位，或停止回位";color=amber;break;
+ case Phase::ReturnStopped:status="回位未完成";help="继续回位，或从此处新运行";color=amber;break;
+ case Phase::FeedbackLost:status=v->feedback_valid?"反馈已恢复":"反馈失效";help=v->feedback_valid?"手动继续、停止或选择新运行":"已请求停止，实际状态未确认";color=amber;break;
+ case Phase::Settling:status="正在停止";help="读取最终位置，请稍候";color=amber;break;
+ case Phase::OriginLost:status="本次起点失效";help="位置发生跳变，需重新建立任务";color=amber;break;
+ default:break;
+ }
+ lv_label_set_text(state_label_,status);lv_obj_set_style_text_color(state_label_,color,0);lv_label_set_text(hint_,help);
+ int64_t h=v->displacement*100/32768,m=h<0?-h:h;char b[96];
+ snprintf(b,sizeof(b),"%s%lld.%02lld",h<0?"-":"",(long long)(m/100),(long long)(m%100));lv_label_set_text(count_label_,p==Phase::OriginLost?"--":b);
+ snprintf(b,sizeof(b),v->mode?"实际圈数 / 目标 %d 圈":"实际圈数",v->target);lv_label_set_text(target_label_,p==Phase::OriginLost?"原起点不可用于计数或回位":!v->feedback_valid&&v->origin_valid?"上次有效圈数 · 等待确认":v->reversing?"距本次起点 · 圈":b);
+ if(v->mode){lv_obj_clear_flag(progress_,LV_OBJ_FLAG_HIDDEN);int64_t value=v->target>0?v->displacement*1000/(v->target*32768LL):0;lv_bar_set_value(progress_,value<0?0:value>1000?1000:value,LV_ANIM_OFF);}else lv_obj_add_flag(progress_,LV_OBJ_FLAG_HIDDEN);
+ snprintf(b,sizeof(b),"设定转速\n%d RPM · 点击选择",v->rpm);label(speed_,b);enable(speed_,p!=Phase::Settling);
+ snprintf(b,sizeof(b),v->mode?"目标圈数\n%d 圈 · 点击输入":"自由运行\n无目标圈数",v->target);if(v->mode&&!ready){snprintf(b,sizeof(b),"目标圈数\n%d 圈 · 本次已锁定",v->target);}
+ label(target_,b);enable(target_,ready&&v->mode);
+ if(lost&&v->feedback_valid){snprintf(b,sizeof(b),"回本次起点\n%s · %d RPM",v->forward_ccw?"顺时针":"逆时针",v->rpm);label(target_,b);enable(target_,v->origin_valid&&v->displacement>0);}
+ snprintf(b,sizeof(b),"±%d",v->step);label(step_,b);
+ for(auto o:{minus_,step_,plus_}) {enable(o,ready&&v->mode);if(v->mode)lv_obj_clear_flag(o,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN);}
+ label(primary_,result||p==Phase::OriginLost?"新运行":moving?"暂停":p==Phase::ReturnPaused?"继续回位":p==Phase::Paused||lost?"继续":"启动");
+ lv_obj_set_style_bg_color(primary_,moving?blue:green,0);
+ enable(primary_,(result&&v->feedback_valid)||(ready&&v->feedback_valid)||moving||((p==Phase::Paused||p==Phase::ReturnPaused||lost)&&v->feedback_valid)||(p==Phase::OriginLost&&v->feedback_valid));
+ label(secondary_,"停止");lv_obj_set_style_bg_color(secondary_,red,0);
+ if(result) {
+  snprintf(b,sizeof(b),"%s\n%s · %d RPM",p==Phase::ReturnStopped?"继续回位":"回本次起点",v->forward_ccw?"顺时针":"逆时针",v->rpm);
+  label(secondary_,b);lv_obj_set_style_bg_color(secondary_,blue,0);enable(secondary_,v->origin_valid&&v->feedback_valid&&v->displacement>0);
+ }else enable(secondary_,!ready&&p!=Phase::OriginLost);
+ lv_obj_add_flag(third_,LV_OBJ_FLAG_HIDDEN);place(primary_,12,268,252,40);place(secondary_,272,268,196,40);
+ if(lost&&v->feedback_valid){place(primary_,12,268,144,40);place(secondary_,164,268,144,40);place(third_,316,268,152,40);lv_obj_clear_flag(third_,LV_OBJ_FLAG_HIDDEN);}
+ // Hide the physical-key reminder in narrow space; labels stay readable at 16px.
+ lv_label_set_text(key_hint_,result?"请选择下一步操作":moving?"键1 暂停  键2 停止":p==Phase::Paused||p==Phase::ReturnPaused||lost?"键1 继续  键2 停止":"键1 启动  键2 停止");
+ give();
 }
-
-void gui_app_enter_main_ui(void)
-{
-    if (!lv_lock()) return;
-    lv_obj_clean(lv_scr_act());
-    reset_boot_widgets();
-    reset_main_widgets();
-    build_layout();
-
-    gui_app_update_usb(false);
-    gui_app_update_tf(false);
-    lv_unlock();
-}
-
-void gui_app_update_motor(bool running, bool reversing, bool paused, int16_t rpm, bool can_reverse,
-                          uint8_t mode, bool forward_ccw)
-{
-    if (!lv_lock()) return;
-    if (!s_lbl_rpm || !s_btn_speed || !s_btn_state) {
-        lv_unlock();
-        return;
-    }
-    if (s_lbl_state) {
-        const char *state = "\xE5\x81\x9C\xE6\xAD\xA2";
-        lv_color_t state_color = k_muted;
-        if (mode == 1) {
-            if (running) {
-                if (reversing) {
-                    state = "\xE5\x8F\x8D\xE8\xBD\xAC\xE5\x9B\x9E\xE4\xBD\x8D";
-                    state_color = k_amber;
-                } else {
-                    state = "\xE6\xAD\xA3\xE8\xBD\xAC";
-                    state_color = k_green;
-                }
-            } else if (paused) {
-                state = "\xE5\xB7\xB2\xE6\x9A\x82\xE5\x81\x9C";
-                state_color = k_blue;
-            }
-        } else if (running) {
-            if (reversing) {
-                state = "\xE5\x8F\x8D\xE8\xBD\xAC\xE5\x9B\x9E\xE4\xBD\x8D";
-                state_color = k_amber;
-            } else {
-                state = "\xE6\xAD\xA3\xE8\xBD\xAC";
-                state_color = k_green;
-            }
-        } else if (paused) {
-            // Free mode: stopped off-origin, waiting to return
-            state = "\xE7\xAD\x89\xE5\xBE\x85\xE5\x9B\x9E\xE4\xBD\x8D"; // 等待回位
-            state_color = k_blue;
-        }
-        lv_label_set_text(s_lbl_state, state);
-        lv_obj_set_style_text_color(s_lbl_state, state_color, 0);
-    }
-
-    char dir_buf[8] = "";
-    if (running) {
-        const bool is_ccw = reversing ? !forward_ccw : forward_ccw;
-        snprintf(dir_buf, sizeof(dir_buf), " %s", is_ccw ? "CCW" : "CW");
-    }
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%d RPM%s", rpm, dir_buf);
-    lv_label_set_text(s_lbl_rpm, buf);
-
-    if (s_btn_speed_label) {
-        if (mode == 1) {
-            lv_label_set_text(s_btn_speed_label, reversing ? "Stop Rev" : "Stop->Rev");
-        } else {
-            char sbuf[24];
-            snprintf(sbuf, sizeof(sbuf), "Speed %d", rpm);
-            lv_label_set_text(s_btn_speed_label, sbuf);
-        }
-    }
-
-    if (s_btn_state_label) {
-        const char *txt = "Start";
-        lv_color_t btn_color = k_green;
-        if (mode == 1) {
-            if (running) {
-                txt = "Pause";
-                btn_color = k_blue;
-            } else if (paused) {
-                txt = "Resume";
-                btn_color = k_green;
-            }
-        } else {
-            // Free run mode: Start when idle, Stop when running, Return when off-origin paused
-            if (running) {
-                txt = "Stop";
-                btn_color = k_red;
-            } else if (paused) {
-                txt = "Return";
-                btn_color = k_blue;
-            }
-        }
-        lv_label_set_text(s_btn_state_label, txt);
-        lv_obj_set_style_bg_color(s_btn_state, btn_color, 0);
-    }
-
-    // In count mode this button is Stop/Return, so it must remain usable in motion.
-    lv_obj_clear_state(s_btn_speed, LV_STATE_DISABLED);
-
-    lv_unlock();
-}
-
-void gui_app_update_actual_rpm(int16_t actual_rpm10)
-{
-    if (!lv_lock()) return;
-    if (s_lbl_rpm) {
-        int actual = actual_rpm10 < 0 ? -actual_rpm10 : actual_rpm10;
-        actual = (actual + 5) / 10; // round to nearest RPM
-        char buf[32];
-        snprintf(buf, sizeof(buf), "%d RPM", actual);
-        lv_label_set_text(s_lbl_rpm, buf);
-    }
-    lv_unlock();
-}
-
-void gui_app_update_run_time(uint32_t centiseconds)
-{
-    if (!lv_lock()) return;
-    if (!s_lbl_run_time) {
-        lv_unlock();
-        return;
-    }
-    uint32_t mm = centiseconds / 6000;
-    uint32_t ss = (centiseconds / 100) % 60;
-    uint32_t cs = centiseconds % 100;
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%02u:%02u.%02u", (unsigned)mm, (unsigned)ss, (unsigned)cs);
-    lv_label_set_text(s_lbl_run_time, buf);
-    lv_unlock();
-}
-
-void gui_app_update_usb(bool mounted)
-{
-    if (!lv_lock()) return;
-    if (!s_lbl_usb) {
-        lv_unlock();
-        return;
-    }
-    lv_label_set_text(s_lbl_usb, mounted ? LV_SYMBOL_USB " ON" : LV_SYMBOL_USB " OFF");
-    lv_obj_set_style_text_color(s_lbl_usb, mounted ? k_green : k_muted, 0);
-    lv_unlock();
-}
-
-void gui_app_update_tf(bool mounted)
-{
-    if (!lv_lock()) return;
-    if (!s_lbl_tf) {
-        lv_unlock();
-        return;
-    }
-    lv_label_set_text(s_lbl_tf, mounted ? LV_SYMBOL_SD_CARD " ON" : LV_SYMBOL_SD_CARD " OFF");
-    lv_obj_set_style_text_color(s_lbl_tf, mounted ? k_green : k_muted, 0);
-    lv_unlock();
-}
-
-void gui_app_sync_button(gui_event_t evt)
-{
-    if (!lv_lock()) return;
-    lv_obj_t *btn = NULL;
-    switch (evt) {
-    case GUI_EVENT_SPEED_STEP: btn = s_btn_speed; break;
-    case GUI_EVENT_STATE_TOGGLE: btn = s_btn_state; break;
-    case GUI_EVENT_MODE_SWITCH: btn = s_btn_mode; break;
-    case GUI_EVENT_COUNT_INC: btn = s_btn_count_inc; break;
-    case GUI_EVENT_COUNT_DEC: btn = s_btn_count_dec; break;
-    case GUI_EVENT_COUNT_STEP_TOGGLE: btn = s_btn_count_step; break;
-    case GUI_EVENT_FORWARD_DIR_TOGGLE: btn = s_btn_dir; break;
-    default: break;
-    }
-    if (btn) {
-        lv_event_send(btn, LV_EVENT_CLICKED, NULL);
-    }
-    lv_unlock();
-}
-
-void gui_app_set_mode(uint8_t mode)
-{
-    if (!lv_lock()) return;
-    // Update mode button label
-    if (s_btn_mode_label) {
-        lv_label_set_text(s_btn_mode_label, mode == 0 ? "计时模式" : "计数模式");
-    }
-    // Timer mode removed; always hide the run-time label.
-    if (s_lbl_run_time) {
-        lv_obj_add_flag(s_lbl_run_time, LV_OBJ_FLAG_HIDDEN);
-    }
-    if (s_lbl_count) {
-        lv_obj_clear_flag(s_lbl_count, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_style_text_font(s_lbl_count, &lv_font_montserrat_48, 0);
-    }
-    if (s_count_btn_row) {
-        if (mode == 1) {
-            lv_obj_clear_flag(s_count_btn_row, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(s_count_btn_row, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
-    lv_unlock();
-}
-
-void gui_app_update_rotation_fixed(int64_t displacement, int32_t target)
-{
-    if (!lv_lock()) return;
-    if (s_lbl_count) {
-        const int64_t hundredths = displacement * 100 / 32768;
-        const int64_t magnitude = hundredths < 0 ? -hundredths : hundredths;
-        char buf[64];
-        if (target > 0) {
-            snprintf(buf, sizeof(buf), "%s%lld.%02lld/%ld", hundredths < 0 ? "-" : "",
-                     (long long)(magnitude / 100), (long long)(magnitude % 100), (long)target);
-        } else {
-            snprintf(buf, sizeof(buf), "%s%lld.%02lld", hundredths < 0 ? "-" : "",
-                     (long long)(magnitude / 100), (long long)(magnitude % 100));
-        }
-        lv_label_set_text(s_lbl_count, buf);
-    }
-    lv_unlock();
-}
-
-void gui_app_update_rotation_count(int32_t current, int32_t target)
-{
-    if (!lv_lock()) return;
-    if (s_lbl_count) {
-        char buf[32];
-        if (target > 0) {
-            snprintf(buf, sizeof(buf), "%ld/%ld", (long)current, (long)target);
-        } else {
-            snprintf(buf, sizeof(buf), "%ld", (long)current);
-        }
-        lv_label_set_text(s_lbl_count, buf);
-    }
-    lv_unlock();
-}
-
-void gui_app_update_count_buttons(bool enabled)
-{
-    if (!lv_lock()) return;
-    if (s_btn_count_dec) {
-        if (enabled) {
-            lv_obj_clear_state(s_btn_count_dec, LV_STATE_DISABLED);
-        } else {
-            lv_obj_add_state(s_btn_count_dec, LV_STATE_DISABLED);
-        }
-    }
-    if (s_btn_count_inc) {
-        if (enabled) {
-            lv_obj_clear_state(s_btn_count_inc, LV_STATE_DISABLED);
-        } else {
-            lv_obj_add_state(s_btn_count_inc, LV_STATE_DISABLED);
-        }
-    }
-    if (s_btn_count_step) {
-        if (enabled) {
-            lv_obj_clear_state(s_btn_count_step, LV_STATE_DISABLED);
-        } else {
-            lv_obj_add_state(s_btn_count_step, LV_STATE_DISABLED);
-        }
-    }
-    lv_unlock();
-}
-
-void gui_app_update_state_button(const char *text, uint32_t color_hex)
-{
-    if (!lv_lock()) return;
-    if (s_btn_state_label) {
-        lv_label_set_text(s_btn_state_label, text);
-    }
-    if (s_btn_state) {
-        lv_obj_set_style_bg_color(s_btn_state, lv_color_hex(color_hex), 0);
-    }
-    lv_unlock();
-}
-
-void gui_app_update_forward_direction(bool forward_ccw)
-{
-    if (!lv_lock()) return;
-    if (s_btn_dir_label) {
-        lv_label_set_text(s_btn_dir_label, forward_ccw ? "正转逆时" : "正转顺时");
-    }
-    if (s_btn_dir) {
-        lv_obj_set_style_bg_color(s_btn_dir, forward_ccw ? k_amber : k_border, 0);
-    }
-    lv_unlock();
-}
-
-void gui_app_update_count_step(int step)
-{
-    if (!lv_lock()) return;
-    if (s_btn_count_step_label) {
-        lv_label_set_text(s_btn_count_step_label, step == 1 ? "x1" : "x10");
-    }
-    lv_unlock();
-}
+void gui_app_update_usb(bool mounted) {if(!take())return;if(built_){lv_label_set_text(usb_,mounted?"USB OK":"USB --");lv_obj_set_style_text_color(usb_,mounted?lv_color_hex(0x69D7B5):muted,0);}give();}
+void gui_app_update_tf(bool mounted) {if(!take())return;if(built_){lv_label_set_text(tf_,mounted?"TF OK":"TF --");lv_obj_set_style_text_color(tf_,mounted?lv_color_hex(0x69D7B5):muted,0);}give();}
