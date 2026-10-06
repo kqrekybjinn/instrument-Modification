@@ -20,6 +20,29 @@ struct ControlServiceTest {
  static void tick(ControlService &c){mock::now+=50000;mock::position+=mock::rpm10/10.0/60*32768*0.05;if(c.should_poll_position()){c.refresh_position();c.final_sample_pending_=false;}c.service_motion(mock::now);c.publish();}
  static void command(ControlService &c,control_cmd_id_t id,int value=0){c.handle_command({id,(int16_t)value});c.publish();}
  static void settle(ControlService &c){for(int i=0;i<100&&c.state_.phase==Phase::Settling;i++){tick(c);}assert(c.state_.phase!=Phase::Settling);}
+ static void pause_resume_cases(){
+ for(int mode:{0,1})for(bool returning:{false,true}) {
+  ControlService c;c.init();mock::online=true;mock::position=8*32768;
+  c.state_.mode=mode;c.state_.target_count=20;c.state_.target_rpm=380;
+  c.state_.origin_valid=true;c.state_.feedback_valid=true;
+  c.state_.pos_fixed_start=7*32768;c.state_.pos_fixed_now=8*32768;c.state_.pos_fixed_peak=9*32768;
+  workflow::set_phase(c.state_,returning?Phase::Returning:Phase::Running);
+  c.sent_rpm10_=returning?-3800:3800;mock::rpm10=c.sent_rpm10_;
+  int queries=mock::queries,brakes=mock::brakes;mock::online=false;
+  command(c,CMD_STATE_TOGGLE);
+  assert(c.state_.phase==(returning?Phase::ReturnPaused:Phase::Paused));
+  assert(mock::brakes==brakes+1&&mock::queries==queries&&mock::rpm10==0);
+  assert(c.state_.origin_valid&&c.state_.pos_fixed_start==7*32768);
+  mock::online=true;tick(c); // One final sample after pause, no stationary confirmation.
+  command(c,CMD_STATE_TOGGLE);
+  assert(c.state_.phase==(returning?Phase::Returning:Phase::Running));
+  assert(std::abs(mock::rpm10)==SMOOTH_SLOW_RPM*10);
+  assert(c.state_.pos_fixed_start==7*32768&&c.state_.target_count==20);
+  for(int i=0;i<5;i++){int previous=std::abs(mock::rpm10);tick(c);assert(std::abs(mock::rpm10)<=previous+60);}
+  command(c,CMD_STATE_TOGGLE);command(c,CMD_STOP);
+  assert(c.state_.phase==(returning?Phase::ReturnStopped:Phase::Stopped)&&mock::rpm10==0);
+ }
+}
  static void emergency_cases(){
  for(int mode:{0,1})for(Phase phase:{Phase::Running,Phase::Paused,Phase::Returning,Phase::ReturnPaused,Phase::Settling}) {
   ControlService c;c.init();c.state_.mode=mode;c.state_.origin_valid=true;
@@ -54,7 +77,7 @@ struct ControlServiceTest {
  command(c,CMD_MODE_SWITCH);command(c,CMD_SET_COUNT,10);assert(c.state_.mode==1);
  auto origin=(int64_t)mock::position;command(c,CMD_STATE_TOGGLE);assert(c.state_.phase==Phase::Running&&c.state_.origin_valid);assert(c.state_.pos_fixed_start==origin);
  command(c,CMD_SET_COUNT,99);command(c,CMD_MODE_SWITCH);command(c,CMD_FORWARD_DIR_TOGGLE);assert(c.state_.target_count==10&&c.state_.mode==1&&!c.state_.forward_ccw);
- for(int i=0;i<10;i++){tick(c);}command(c,CMD_STATE_TOGGLE);assert(c.state_.phase==Phase::Settling);settle(c);assert(c.state_.phase==Phase::Paused&&c.state_.origin_valid);
+ for(int i=0;i<10;i++){tick(c);}command(c,CMD_STATE_TOGGLE);assert(c.state_.phase==Phase::Paused&&mock::rpm10==0);settle(c);assert(c.state_.phase==Phase::Paused&&c.state_.origin_valid);
  command(c,CMD_SET_SPEED,200);assert(c.state_.target_rpm==200);command(c,CMD_STATE_TOGGLE);assert(c.state_.phase==Phase::Running);
  command(c,CMD_STOP);assert(c.state_.phase==Phase::Stopped&&mock::rpm10==0);settle(c);assert(c.state_.phase==Phase::Stopped&&!c.state_.reversing&&c.state_.origin_valid);
  int writes=mock::writes;command(c,CMD_STATE_TOGGLE);assert(c.state_.phase==Phase::Stopped&&mock::writes==writes);
@@ -85,4 +108,4 @@ struct ControlServiceTest {
  std::cout<<"CONTROL_INTEGRATION_PASS\n";
  }
 };
-int main(){ControlServiceTest::emergency_cases();ControlServiceTest::count_cases();ControlServiceTest::run();}
+int main(){ControlServiceTest::pause_resume_cases();ControlServiceTest::emergency_cases();ControlServiceTest::count_cases();ControlServiceTest::run();}

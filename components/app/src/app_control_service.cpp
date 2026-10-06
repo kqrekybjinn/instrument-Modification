@@ -136,7 +136,10 @@ void ControlService::handle_command(control_cmd_t cmd) {
  if (cmd.id != CMD_STATE_TOGGLE && cmd.id != CMD_RETURN) return;
  // Running -> pause must not be blocked by a single failed position read.
  if (cmd.id == CMD_STATE_TOGGLE && workflow::motion(state_.phase)) {
-  begin_settle(state_.reversing ? Phase::ReturnPaused : Phase::Paused, true);
+  state_.settle_destination = state_.reversing ? Phase::ReturnPaused : Phase::Paused;
+  state_.settle_smooth = false;
+  state_.run_start_us = 0;
+  finish_stop(true); // Pause brakes now; resume retains origin and ramps from low speed.
   return;
  }
  Phase next = workflow::transition(state_, cmd.id == CMD_RETURN ? workflow::Action::Return : workflow::Action::Toggle);
