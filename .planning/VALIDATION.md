@@ -10,3 +10,5 @@
 - Final stop capture: 3 valid stable position samples (change <=32 Q15 units each), maximum wait 1s. This is a software settling heuristic, not a motor accuracy specification.
 - Existing deceleration constants unchanged; tune only after measurements.
 - Known scope: logs add Q15 displacement and feedback-valid flag, but final stopped result is displayed rather than persisted as a separate log event. Log retention is deferred.
+
+2026-10-06 更新：连续静止确认、失联停止/恢复门控、位置跳变保护已删除，以 02-02-SUMMARY.md 为准。
