@@ -53,23 +53,17 @@ void InputService::task_loop()
         bool p = key_pressed(KEY_STOP_PIN);
 
         if (s && !prev_start) {
-            control_state_t st = control_.snapshot();
-            if (st.mode == MODE_COUNT) {
-                // Count mode A key: pause/resume/start-forward
-                control_.push_cmd(CMD_STATE_TOGGLE);
-            } else {
-                // Timer mode: keep UI and physical key behavior consistent
-                gui_app_sync_button(GUI_EVENT_STATE_TOGGLE);
-            }
+            // Start key: always toggles start/stop in both modes
+            control_.push_cmd(CMD_STATE_TOGGLE);
         }
         if (p && !prev_stop) {
             control_state_t st = control_.snapshot();
             if (st.mode == MODE_COUNT) {
-                // Count mode B key: stop forward/pause and enter reverse flow
+                // Count mode B key: stop/reverse flow
                 control_.push_cmd(CMD_COUNT_ABORT);
             } else {
-                // Stop key in timer mode: cycle speed level
-                gui_app_sync_button(GUI_EVENT_SPEED_STEP);
+                // Free run mode: cycle speed (works when stopped or running)
+                control_.push_cmd(CMD_SPEED_STEP);
             }
         }
         prev_start = s;

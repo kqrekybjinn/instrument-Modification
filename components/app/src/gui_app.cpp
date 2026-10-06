@@ -171,7 +171,7 @@ static void build_boot_layout(void)
     lv_obj_set_style_text_color(title, k_text, 0);
 
     s_boot_lbl = lv_label_create(scr);
-    lv_label_set_text(s_boot_lbl, "\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96\xE4\xB8\xAD 0%");
+    lv_label_set_text(s_boot_lbl, "电机初始化中 0%");
     lv_obj_set_style_text_font(s_boot_lbl, pick_text_font(), 0);
     lv_obj_set_style_text_color(s_boot_lbl, k_muted, 0);
 
@@ -201,19 +201,15 @@ static void build_layout(void)
     /* ---- Top status bar ---- */
     lv_obj_t *topbar = lv_obj_create(scr);
     lv_obj_remove_style_all(topbar);
-    lv_obj_set_size(topbar, LV_PCT(100), 32);
+    lv_obj_set_size(topbar, LV_PCT(100), 48);
     lv_obj_set_layout(topbar, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(topbar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(topbar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(topbar, LV_OBJ_FLAG_SCROLLABLE);
 
-    s_lbl_mode = lv_label_create(topbar);
-    lv_label_set_text(s_lbl_mode, "MODI");
-    lv_obj_set_style_text_color(s_lbl_mode, k_text, 0);
-    lv_obj_set_style_text_font(s_lbl_mode, &lv_font_montserrat_20, 0);
-
     lv_obj_t *top_ctrls = lv_obj_create(topbar);
     lv_obj_remove_style_all(top_ctrls);
+    lv_obj_set_size(top_ctrls, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_layout(top_ctrls, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(top_ctrls, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(top_ctrls, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -222,42 +218,43 @@ static void build_layout(void)
 
     /* Mode toggle button */
     s_btn_mode = lv_btn_create(top_ctrls);
-    lv_obj_set_size(s_btn_mode, LV_SIZE_CONTENT, 28);
+    lv_obj_set_size(s_btn_mode, LV_SIZE_CONTENT, 40);
     lv_obj_set_style_bg_color(s_btn_mode, k_border, 0);
     lv_obj_set_style_radius(s_btn_mode, 6, 0);
     lv_obj_set_style_border_width(s_btn_mode, 0, 0);
     lv_obj_set_style_shadow_width(s_btn_mode, 0, 0);
-    lv_obj_set_style_pad_hor(s_btn_mode, 10, 0);
-    lv_obj_set_style_pad_ver(s_btn_mode, 2, 0);
+    lv_obj_set_style_pad_hor(s_btn_mode, 12, 0);
+    lv_obj_set_style_pad_ver(s_btn_mode, 8, 0);
     lv_obj_set_style_bg_opa(s_btn_mode, LV_OPA_40, LV_STATE_DISABLED);
     lv_obj_add_event_cb(s_btn_mode, button_evt_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)GUI_EVENT_MODE_SWITCH);
 
     s_btn_mode_label = lv_label_create(s_btn_mode);
-    lv_label_set_text(s_btn_mode_label, "Timer");
-    lv_obj_set_style_text_font(s_btn_mode_label, &lv_font_montserrat_14, 0);
+    lv_label_set_text(s_btn_mode_label, "计时模式");
+    lv_obj_set_style_text_font(s_btn_mode_label, pick_text_font(), 0);
     lv_obj_set_style_text_color(s_btn_mode_label, k_text, 0);
     lv_obj_center(s_btn_mode_label);
 
     /* Forward direction button (CW/CCW) */
     s_btn_dir = lv_btn_create(top_ctrls);
-    lv_obj_set_size(s_btn_dir, LV_SIZE_CONTENT, 28);
+    lv_obj_set_size(s_btn_dir, LV_SIZE_CONTENT, 40);
     lv_obj_set_style_bg_color(s_btn_dir, k_border, 0);
     lv_obj_set_style_radius(s_btn_dir, 6, 0);
     lv_obj_set_style_border_width(s_btn_dir, 0, 0);
     lv_obj_set_style_shadow_width(s_btn_dir, 0, 0);
-    lv_obj_set_style_pad_hor(s_btn_dir, 10, 0);
-    lv_obj_set_style_pad_ver(s_btn_dir, 2, 0);
+    lv_obj_set_style_pad_hor(s_btn_dir, 12, 0);
+    lv_obj_set_style_pad_ver(s_btn_dir, 8, 0);
     lv_obj_set_style_bg_opa(s_btn_dir, LV_OPA_40, LV_STATE_DISABLED);
     lv_obj_add_event_cb(s_btn_dir, button_evt_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)GUI_EVENT_FORWARD_DIR_TOGGLE);
 
     s_btn_dir_label = lv_label_create(s_btn_dir);
-    lv_label_set_text(s_btn_dir_label, "FWD CW");
-    lv_obj_set_style_text_font(s_btn_dir_label, &lv_font_montserrat_14, 0);
+    lv_label_set_text(s_btn_dir_label, "正转顺时");
+    lv_obj_set_style_text_font(s_btn_dir_label, pick_text_font(), 0);
     lv_obj_set_style_text_color(s_btn_dir_label, k_text, 0);
     lv_obj_center(s_btn_dir_label);
 
     lv_obj_t *indicators = lv_obj_create(topbar);
     lv_obj_remove_style_all(indicators);
+    lv_obj_set_size(indicators, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_layout(indicators, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(indicators, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_gap(indicators, 14, 0);
@@ -346,8 +343,8 @@ static void build_layout(void)
 
     lv_obj_set_flex_grow(s_btn_speed, 1);
     lv_obj_set_flex_grow(s_btn_state, 1);
-    lv_obj_set_height(s_btn_speed, 64);
-    lv_obj_set_height(s_btn_state, 64);
+    lv_obj_set_height(s_btn_speed, 72);
+    lv_obj_set_height(s_btn_state, 72);
 }
 
 esp_err_t gui_app_init(SemaphoreHandle_t lvgl_lock, gui_event_cb_t cb)
@@ -378,7 +375,7 @@ void gui_app_update_boot(uint8_t percent)
     }
     if (s_boot_lbl) {
         char buf[48];
-        snprintf(buf, sizeof(buf), "\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96\xE4\xB8\xAD %u%%", (unsigned)percent);
+        snprintf(buf, sizeof(buf), "电机初始化中 %u%%", (unsigned)percent);
         lv_label_set_text(s_boot_lbl, buf);
     }
     lv_unlock();
@@ -429,6 +426,10 @@ void gui_app_update_motor(bool running, bool reversing, bool paused, int16_t rpm
                 state = "\xE6\xAD\xA3\xE8\xBD\xAC";
                 state_color = k_green;
             }
+        } else if (paused) {
+            // Free mode: stopped off-origin, waiting to return
+            state = "\xE7\xAD\x89\xE5\xBE\x85\xE5\x9B\x9E\xE4\xBD\x8D"; // 等待回位
+            state_color = k_blue;
         }
         lv_label_set_text(s_lbl_state, state);
         lv_obj_set_style_text_color(s_lbl_state, state_color, 0);
@@ -465,23 +466,21 @@ void gui_app_update_motor(bool running, bool reversing, bool paused, int16_t rpm
                 btn_color = k_green;
             }
         } else {
+            // Free run mode: Start when idle, Stop when running, Return when off-origin paused
             if (running) {
                 txt = "Stop";
                 btn_color = k_red;
-            } else if (can_reverse) {
-                txt = "Reverse";
-                btn_color = k_amber;
+            } else if (paused) {
+                txt = "Return";
+                btn_color = k_blue;
             }
         }
         lv_label_set_text(s_btn_state_label, txt);
         lv_obj_set_style_bg_color(s_btn_state, btn_color, 0);
     }
 
-    if (mode == 0 && running) {
-        lv_obj_add_state(s_btn_speed, LV_STATE_DISABLED);
-    } else {
-        lv_obj_clear_state(s_btn_speed, LV_STATE_DISABLED);
-    }
+    // In count mode this button is Stop/Return, so it must remain usable in motion.
+    lv_obj_clear_state(s_btn_speed, LV_STATE_DISABLED);
 
     lv_unlock();
 }
@@ -564,26 +563,15 @@ void gui_app_set_mode(uint8_t mode)
     if (!lv_lock()) return;
     // Update mode button label
     if (s_btn_mode_label) {
-        lv_label_set_text(s_btn_mode_label, mode == 0 ? "Timer" : "Count");
+        lv_label_set_text(s_btn_mode_label, mode == 0 ? "计时模式" : "计数模式");
     }
-    // Show/hide timer vs count widgets
+    // Timer mode removed; always hide the run-time label.
     if (s_lbl_run_time) {
-        if (mode == 0) {
-            lv_obj_clear_flag(s_lbl_run_time, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(s_lbl_run_time, LV_OBJ_FLAG_HIDDEN);
-        }
+        lv_obj_add_flag(s_lbl_run_time, LV_OBJ_FLAG_HIDDEN);
     }
     if (s_lbl_count) {
-        // Rotation count visible in both modes; font size differs by mode
         lv_obj_clear_flag(s_lbl_count, LV_OBJ_FLAG_HIDDEN);
-        if (mode == 0) {
-            // Timer mode: smaller font alongside the timer display
-            lv_obj_set_style_text_font(s_lbl_count, &lv_font_montserrat_20, 0);
-        } else {
-            // Count mode: large font as primary display
-            lv_obj_set_style_text_font(s_lbl_count, &lv_font_montserrat_48, 0);
-        }
+        lv_obj_set_style_text_font(s_lbl_count, &lv_font_montserrat_48, 0);
     }
     if (s_count_btn_row) {
         if (mode == 1) {
@@ -591,6 +579,25 @@ void gui_app_set_mode(uint8_t mode)
         } else {
             lv_obj_add_flag(s_count_btn_row, LV_OBJ_FLAG_HIDDEN);
         }
+    }
+    lv_unlock();
+}
+
+void gui_app_update_rotation_fixed(int64_t displacement, int32_t target)
+{
+    if (!lv_lock()) return;
+    if (s_lbl_count) {
+        const int64_t hundredths = displacement * 100 / 32768;
+        const int64_t magnitude = hundredths < 0 ? -hundredths : hundredths;
+        char buf[64];
+        if (target > 0) {
+            snprintf(buf, sizeof(buf), "%s%lld.%02lld/%ld", hundredths < 0 ? "-" : "",
+                     (long long)(magnitude / 100), (long long)(magnitude % 100), (long)target);
+        } else {
+            snprintf(buf, sizeof(buf), "%s%lld.%02lld", hundredths < 0 ? "-" : "",
+                     (long long)(magnitude / 100), (long long)(magnitude % 100));
+        }
+        lv_label_set_text(s_lbl_count, buf);
     }
     lv_unlock();
 }
@@ -653,7 +660,7 @@ void gui_app_update_forward_direction(bool forward_ccw)
 {
     if (!lv_lock()) return;
     if (s_btn_dir_label) {
-        lv_label_set_text(s_btn_dir_label, forward_ccw ? "FWD CCW" : "FWD CW");
+        lv_label_set_text(s_btn_dir_label, forward_ccw ? "正转逆时" : "正转顺时");
     }
     if (s_btn_dir) {
         lv_obj_set_style_bg_color(s_btn_dir, forward_ccw ? k_amber : k_border, 0);

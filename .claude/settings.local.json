@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git rm -r --cached build/ 2>/dev/null; echo \"done\")",
+      "Bash(git add .gitignore && git add -A && git status -s | head -30)",
+      "Bash(git rm -r --cached build/ 2>&1 | tail -1)",
+      "mcp__ide__getDiagnostics"
+    ]
+  }
+}

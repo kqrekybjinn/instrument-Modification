@@ -44,6 +44,7 @@ void gui_app_sync_button(gui_event_t evt);
 
 // Count mode UI
 void gui_app_set_mode(uint8_t mode);   // 0=timer, 1=count
+void gui_app_update_rotation_fixed(int64_t displacement, int32_t target);
 void gui_app_update_rotation_count(int32_t current, int32_t target);
 void gui_app_update_count_buttons(bool enabled);
 void gui_app_update_count_step(int step);

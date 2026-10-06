@@ -5,3 +5,6 @@ dependencies.lock
 __pycache__/
 *.pyc
 .cache/
+node_modules/
+package-lock.json
+.codex-workspace/

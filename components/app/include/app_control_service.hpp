@@ -19,6 +19,8 @@ private:
     static void task_trampoline(void *arg);
     void task_loop();
 
+    bool refresh_position();
+    void stop_and_capture(const control_state_t &st, int16_t rpm10, bool smooth);
     void apply_gui_refresh(const control_state_t *st);
 
     QueueHandle_t control_q_ = nullptr;

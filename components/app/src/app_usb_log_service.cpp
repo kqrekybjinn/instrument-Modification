@@ -44,22 +44,26 @@ void UsbLogService::task_loop()
         }
 
         if (!header_written) {
-            const char *hdr = "timestamp_ms,mode,motor_running,motor_rpm,sensor_value,target_count,mileage_now,mileage_delta\n";
+            const char *hdr = "timestamp_ms,mode,motor_running,motor_rpm,sensor_value,target_count,mileage_now,mileage_delta,rotation_units,feedback_valid\n";
             (void)msc_write_file("logs/motor_log.csv", hdr, strlen(hdr), false);
             header_written = true;
         }
 
         int64_t now_ms = esp_timer_get_time() / 1000;
         char line[160];
-        int n = snprintf(line, sizeof(line), "%lld,%s,%d,%d,%ld,%d,%ld,%ld\n",
+        int n = snprintf(line, sizeof(line), "%lld,%s,%d,%d,%ld,%d,%ld,%ld,%lld,%d\n",
                          (long long)now_ms,
-                         st.mode == MODE_COUNT ? "COUNT" : "TIMER",
+                         st.mode == MODE_COUNT ? "COUNT" : "FREE",
                          st.running,
                          (int)st.target_rpm,
                          (long)st.sensor_value,
                          (int)st.target_count,
                          (long)st.mileage_now,
-                         (long)(st.mileage_start >= 0 ? st.mileage_now - st.mileage_start : 0));
+                         (long)(st.pos_fixed_start != INT64_MIN
+                                ? (st.pos_fixed_now - st.pos_fixed_start) / 32768
+                                : (st.mileage_start >= 0 ? st.mileage_now - st.mileage_start : 0)),
+                         (long long)(st.pos_fixed_start != INT64_MIN ? st.pos_fixed_now - st.pos_fixed_start : 0),
+                         st.feedback_valid);
         if (n > 0 && n < (int)sizeof(line)) {
             (void)msc_write_file("logs/motor_log.csv", line, (size_t)n, true);
         }

@@ -16,5 +16,6 @@
     "--query-driver=/home/amu/.espressif/tools/xtensa-esp-elf/esp-13.2.0_20240530/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc",
     "--compile-commands-dir=${workspaceFolder}/build"
   ],
-  "idf.currentSetup": "/home/amu/toolchains/esp/esp-idf"
+  "idf.currentSetup": "/home/amu/toolchains/esp/esp-idf",
+  "idf.flashType": "UART"
 }
