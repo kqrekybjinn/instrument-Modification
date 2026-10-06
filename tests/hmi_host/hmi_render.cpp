@@ -9,6 +9,20 @@
 #include <set>
 static std::vector<lv_color_t> frame(480*320);
 static int received=-1,value_=-1;
+static lv_point_t pointer_point{};
+static bool pointer_down=false;
+static void pointer_read(lv_indev_drv_t*,lv_indev_data_t* d){d->point=pointer_point;d->state=pointer_down?LV_INDEV_STATE_PR:LV_INDEV_STATE_REL;}
+static void pointer_step(){lv_tick_inc(35);lv_timer_handler();}
+static lv_obj_t *find(lv_obj_t*,const char*);
+static void touch(const char* name,gui_view_t& v){
+ auto l=find(lv_scr_act(),name);assert(l);auto b=lv_obj_get_parent(l);
+ lv_obj_update_layout(lv_scr_act());lv_area_t a;lv_obj_get_coords(b,&a);
+ pointer_point={(lv_coord_t)((a.x1+a.x2)/2),(lv_coord_t)((a.y1+a.y2)/2)};
+ received=-1;pointer_down=true;pointer_step();assert(received>=0);
+ for(int i=0;i<4;i++){gui_app_render(&v);pointer_step();}
+ pointer_down=false;pointer_step();assert(received>=0);
+}
+
 static void command(gui_event_t e,int16_t v){received=e;value_=v;}
 static void flush(lv_disp_drv_t *d,const lv_area_t *area,lv_color_t *pixels){
  for(int y=area->y1;y<=area->y2;y++)for(int x=area->x1;x<=area->x2;x++)frame[y*480+x]=*pixels++;
@@ -22,7 +36,7 @@ static lv_obj_t *find(lv_obj_t *root,const char *needle){
  if(lv_obj_check_type(c,&lv_label_class)&&strcmp(lv_label_get_text(c),needle)==0)return c;
  if(auto r=find(c,needle))return r;}return nullptr;
 }
-static void click(const char *label){auto o=find(lv_scr_act(),label);assert(o);auto b=lv_obj_get_parent(o);assert(!lv_obj_has_state(b,LV_STATE_DISABLED));received=-1;lv_event_send(b,LV_EVENT_CLICKED,nullptr);tick();}
+static void click(const char *label){auto o=find(lv_scr_act(),label);assert(o);auto b=lv_obj_get_parent(o);assert(!lv_obj_has_state(b,LV_STATE_DISABLED));received=-1;const bool immediate=strcmp(label,"启动")==0||strcmp(label,"暂停")==0||strcmp(label,"停止")==0||strcmp(label,"继续")==0||strcmp(label,"新运行")==0||strcmp(label,"继续回位")==0||strstr(label,"回本次起点")||strstr(label,"继续回位\n");lv_event_send(b,immediate?LV_EVENT_PRESSED:LV_EVENT_CLICKED,nullptr);tick();}
 static bool disabled(const char *label){auto o=find(lv_scr_act(),label);assert(o);return lv_obj_has_state(lv_obj_get_parent(o),LV_STATE_DISABLED);}
 static void audit(lv_obj_t *o){
  if(lv_obj_has_flag(o,LV_OBJ_FLAG_HIDDEN))return;
@@ -39,12 +53,13 @@ static void render(gui_view_t &v,const char *name){gui_app_render(&v);tick();aud
 int main(){
  std::filesystem::create_directories("artifacts/hmi");lv_init();static lv_color_t draw[480*20];static lv_disp_draw_buf_t buf;lv_disp_draw_buf_init(&buf,draw,nullptr,480*20);
  static lv_disp_drv_t driver;lv_disp_drv_init(&driver);driver.hor_res=480;driver.ver_res=320;driver.draw_buf=&buf;driver.flush_cb=flush;lv_disp_drv_register(&driver);
+ static lv_indev_drv_t input;lv_indev_drv_init(&input);input.type=LV_INDEV_TYPE_POINTER;input.read_cb=pointer_read;lv_indev_drv_register(&input);
  gui_app_init(nullptr,command);save("boot");gui_app_enter_main_ui();gui_app_update_usb(true);gui_app_update_tf(false);
  gui_view_t v{(uint8_t)workflow::Phase::Ready,1,true,false,false,false,100,10,10,0,0};
- render(v,"ready");click("启动");assert(received==GUI_EVENT_STATE_TOGGLE);assert(disabled("停止"));
+ render(v,"ready");touch("启动",v);assert(received==GUI_EVENT_STATE_TOGGLE);click("启动");assert(received==GUI_EVENT_STATE_TOGGLE);assert(disabled("停止"));
  click("设定转速\n100 RPM · 点击选择");audit(lv_scr_act());save("speed");click("300 RPM");assert(received==GUI_EVENT_SET_SPEED&&value_==300);
  click("目标圈数\n10 圈 · 点击输入");audit(lv_scr_act());save("target");click("清空");click("1");click("2");click("确定");assert(received==GUI_EVENT_SET_COUNT&&value_==12);
- v.phase=(uint8_t)workflow::Phase::Running;v.origin_valid=true;v.displacement=106496;render(v,"running");click("暂停");assert(received==GUI_EVENT_STATE_TOGGLE);click("停止");assert(received==GUI_EVENT_STOP);click("设定转速\n100 RPM · 点击选择");click("停止");assert(received==GUI_EVENT_STOP);assert(disabled("定圈模式"));assert(disabled("正转顺时针"));
+ v.phase=(uint8_t)workflow::Phase::Running;v.origin_valid=true;v.displacement=106496;render(v,"running");touch("暂停",v);assert(received==GUI_EVENT_STATE_TOGGLE);touch("停止",v);assert(received==GUI_EVENT_STOP);click("暂停");assert(received==GUI_EVENT_STATE_TOGGLE);click("停止");assert(received==GUI_EVENT_STOP);click("设定转速\n100 RPM · 点击选择");click("停止");assert(received==GUI_EVENT_STOP);assert(disabled("定圈模式"));assert(disabled("正转顺时针"));
  // Parameter modal is closed if a physical key starts motion.
  v.phase=(uint8_t)workflow::Phase::Ready;v.origin_valid=false;render(v,"ready_again");click("目标圈数\n10 圈 · 点击输入");v.phase=(uint8_t)workflow::Phase::Running;v.origin_valid=true;gui_app_render(&v);assert(!find(lv_scr_act(),"确定"));
  v.phase=(uint8_t)workflow::Phase::Paused;render(v,"paused");click("继续");assert(received==GUI_EVENT_STATE_TOGGLE);

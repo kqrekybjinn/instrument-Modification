@@ -73,12 +73,20 @@ bool ControlService::refresh_position() {
  const int64_t position = position_math::oriented_position(response.mileage_rotations, response.position_raw, state_.forward_ccw);
  state_.pos_fixed_now = position;
  state_.mileage_now = response.mileage_rotations;
+ if (diagnostic_samples_) {
+  --diagnostic_samples_;
+  ESP_LOGI(TAG, "position mileage=%ld angle=%u origin=%lld now=%lld delta=%lld target=%d phase=%u",
+   (long)response.mileage_rotations, (unsigned)response.position_raw,
+   (long long)state_.pos_fixed_start, (long long)position,
+   (long long)workflow::displacement(state_), state_.target_count, (unsigned)state_.phase);
+ }
  return true;
 }
 bool ControlService::should_poll_position() const {
  return workflow::motion(state_.phase) || final_sample_pending_;
 }
 void ControlService::finish_stop() {
+ ESP_LOGI(TAG, "Stop phase=%u delta=%lld target=%d", (unsigned)state_.settle_destination, (long long)workflow::displacement(state_), state_.target_count);
  send_speed(0); // One zero-speed command, without stationary confirmation or retransmit loops.
  const auto destination = state_.settle_destination;
  if (destination == Phase::Ready) workflow::prepare_new(state_);
@@ -133,11 +141,13 @@ void ControlService::handle_command(control_cmd_t cmd) {
  if (next != Phase::Running && next != Phase::Returning) return;
  if (state_.phase == Phase::Ready) {
   // An immediate fresh query establishes origin; never use a cached or fallback zero.
-  if (!refresh_position()) return;
+  diagnostic_samples_ = 8;
+  if (!refresh_position()) { ESP_LOGW(TAG, "Start: origin query failed"); return; }
   state_.origin_valid = true;
   state_.pos_fixed_start = state_.pos_fixed_now;
   state_.pos_fixed_peak = state_.pos_fixed_now;
   state_.mileage_start = state_.mileage_now;
+  ESP_LOGI(TAG, "Start target=%d mode=%u origin=%lld", state_.target_count, state_.mode, (long long)state_.pos_fixed_start);
  }
  if (!state_.origin_valid) return;
  workflow::set_phase(state_, next);

@@ -19,6 +19,19 @@ struct ControlServiceTest {
  static void tick(ControlService &c){mock::now+=50000;mock::position+=mock::rpm10/10.0/60*32768*0.05;if(c.should_poll_position()){c.refresh_position();c.final_sample_pending_=false;}c.service_motion(mock::now);c.publish();}
  static void command(ControlService &c,control_cmd_id_t id,int value=0){c.handle_command({id,(int16_t)value});c.publish();}
  static void settle(ControlService &c){for(int i=0;i<100&&c.state_.phase==Phase::Settling;i++){tick(c);}assert(c.state_.phase!=Phase::Settling);}
+ static void count_cases(){
+ for(int target:{1,5})for(int angle:{0,100,19000,32700})for(bool ccw:{false,true}) {
+  ControlService c;c.init();mock::online=true;mock::rpm10=0;mock::position=7*32768+angle;
+  command(c,CMD_MODE_SWITCH);command(c,CMD_SET_COUNT,target);command(c,CMD_SET_SPEED,50);
+  if(ccw)command(c,CMD_FORWARD_DIR_TOGGLE);
+  const double start=mock::position;command(c,CMD_STATE_TOGGLE);
+  assert(c.state_.phase==Phase::Running&&workflow::displacement(c.state_)==0&&mock::rpm10!=0);
+  for(int i=0;i<600&&c.state_.phase!=Phase::Complete;i++)tick(c);
+  assert(c.state_.phase==Phase::Complete);
+  const double actual=(mock::position-start)*(ccw?-1:1)/32768;
+  assert(actual>=target&&actual<target+0.5);
+ }
+}
  static void run(){
  ControlService c;c.init();c.refresh_position();c.publish();
  command(c,CMD_MODE_SWITCH);command(c,CMD_SET_COUNT,10);assert(c.state_.mode==1);
@@ -55,4 +68,4 @@ struct ControlServiceTest {
  std::cout<<"CONTROL_INTEGRATION_PASS\n";
  }
 };
-int main(){ControlServiceTest::run();}
+int main(){ControlServiceTest::count_cases();ControlServiceTest::run();}

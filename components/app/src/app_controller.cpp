@@ -109,6 +109,7 @@ static void storage_debug_task(void *arg)
 static void gui_event_bridge(gui_event_t event, int16_t value)
 {
     if (!s_control) return;
+    ESP_LOGI(TAG, "Touch command=%u value=%d", (unsigned)event, value);
     static_assert((int)GUI_EVENT_COUNT_STEP_TOGGLE == (int)CMD_COUNT_STEP_TOGGLE, "GUI/control command mapping");
     s_control->push_cmd((control_cmd_id_t)event, value);
 }

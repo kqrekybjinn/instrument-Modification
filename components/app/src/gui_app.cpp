@@ -31,14 +31,14 @@ static void direct(lv_event_t *event) {
  uintptr_t payload=(uintptr_t)lv_event_get_user_data(event);
  emit((gui_event_t)(payload&255),(int16_t)(payload>>8));
 }
-static lv_obj_t *button(lv_obj_t *parent,const char *value,int x,int y,int w,int h,lv_color_t color,lv_event_cb_t cb,uintptr_t payload=0) {
+static lv_obj_t *button(lv_obj_t *parent,const char *value,int x,int y,int w,int h,lv_color_t color,lv_event_cb_t cb,uintptr_t payload=0,lv_event_code_t trigger=LV_EVENT_CLICKED) {
  auto o=lv_btn_create(parent);place(o,x,y,w,h);
  lv_obj_set_style_radius(o,7,0);lv_obj_set_style_border_width(o,0,0);lv_obj_set_style_shadow_width(o,0,0);
  lv_obj_set_style_bg_color(o,color,0);lv_obj_set_style_bg_opa(o,LV_OPA_100,0);lv_obj_set_style_bg_opa(o,LV_OPA_40,LV_STATE_DISABLED);
  lv_obj_set_style_pad_all(o,4,0);lv_obj_set_style_bg_opa(o,LV_OPA_70,LV_STATE_PRESSED);
  auto l=lv_label_create(o);lv_label_set_text(l,value);lv_obj_set_width(l,w-8);lv_obj_set_style_text_align(l,LV_TEXT_ALIGN_CENTER,0);
  lv_obj_set_style_text_font(l,&lv_font_modi_16_cjk,0);lv_obj_set_style_text_color(l,white,0);lv_obj_center(l);
- lv_obj_add_event_cb(o,cb,LV_EVENT_CLICKED,(void*)payload);return o;
+ lv_obj_add_event_cb(o,cb,trigger,(void*)payload);return o;
 }
 static lv_obj_t *card(lv_obj_t *parent,int x,int y,int w,int h) {
  auto o=lv_obj_create(parent);place(o,x,y,w,h);lv_obj_set_style_pad_all(o,0,0);
@@ -58,7 +58,7 @@ static void show_speed(lv_event_t*) {
   button(modal_,b,18+(i%3)*148,58+(i/3)*66,136,54,values[i]==view_.rpm?blue:panel,pick_speed,values[i]);}
  text(modal_,"运行及暂停时均可调整，平滑切换",18,210,440,&lv_font_modi_16_cjk,muted);
  button(modal_,"返回",18,258,292,44,border,cancel_modal);
- auto stop=button(modal_,"停止",320,258,142,44,red,modal_stop);
+ auto stop=button(modal_,"停止",320,258,142,44,red,modal_stop,0,LV_EVENT_PRESSED);
  enable(stop,view_.phase!=(uint8_t)Phase::Ready);
 }
 static void input_key(lv_event_t *event) {
@@ -119,8 +119,8 @@ static void build() {
  plus_=button(screen,"+",410,196,58,40,border,direct,GUI_EVENT_COUNT_INC);
  key_hint_=text(screen,"按键1 启动/暂停  ·  按键2 停止",272,240,196,&lv_font_modi_16_cjk,muted);
  lv_obj_set_style_text_font(key_hint_,&lv_font_modi_16_cjk,0);
- primary_=button(screen,"启动",12,268,252,40,green,primary_click);
- secondary_=button(screen,"停止",272,268,196,40,red,secondary_click);
+ primary_=button(screen,"启动",12,268,252,40,green,primary_click,0,LV_EVENT_PRESSED);
+ secondary_=button(screen,"停止",272,268,196,40,red,secondary_click,0,LV_EVENT_PRESSED);
  usb_=text(screen,"USB --",12,311,130,&lv_font_montserrat_14,muted);
  tf_=text(screen,"TF --",140,311,130,&lv_font_montserrat_14,muted);
  // Storage indicators share a compact line in the main card to keep all controls inside 320px.
