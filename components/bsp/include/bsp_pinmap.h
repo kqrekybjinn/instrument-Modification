@@ -14,7 +14,7 @@
 #define BSP_MOTOR_UART_TX_GPIO   GPIO_NUM_13
 #define BSP_MOTOR_UART_RX_GPIO   GPIO_NUM_14
 
-// NOTE: Protocol spec says 9600 8N1; keep motor_driver.h authoritative for now.
+// Motor baud rate: 38400 8N1; motor_driver.h is authoritative.
 
 // ---------------- RS485 Sensor UART ----------------
 // Auto direction (no DE/RE). Uses ESP-IDF RS485 half duplex mode.
