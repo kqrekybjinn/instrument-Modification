@@ -22,6 +22,7 @@ static int profile_rpm(int64_t travelled, int64_t remaining, int rpm, bool decel
 }
 void ControlService::init() {
  state_ = control_state_t{};
+ position_tracker_ = position_math::PhasePosition{};
  published_ = state_;
  state_lock_ = xSemaphoreCreateMutex();
  control_q_ = xQueueCreate(16, sizeof(control_cmd_t));
@@ -85,7 +86,26 @@ bool ControlService::refresh_position() {
   }
   return false;
  }
- const int64_t position = position_math::oriented_position(response.mileage_rotations, response.position_raw, state_.forward_ccw);
+ const int64_t sampled_at = esp_timer_get_time();
+ if (!state_.origin_valid || !position_tracker_.initialized()) {
+  position_tracker_.reset(response.mileage_rotations, response.position_raw, sampled_at);
+ } else {
+  // Bound angle unwrapping by elapsed time and the higher of selected/sent RPM.
+  // Beyond that window, only the learned mileage/angle phase can recover turns.
+  const int speed_bound = std::min(400, std::max((int)state_.target_rpm, abs(sent_rpm10_)/10)+20);
+  if (!position_tracker_.update(response.mileage_rotations, response.position_raw, sampled_at, speed_bound)) {
+   state_.mileage_now = response.mileage_rotations;
+   state_.motor_angle = response.position_raw;
+   state_.feedback_valid = false;
+   if (sampled_at-last_count_warning_us_ >= 1000000) {
+    ESP_LOGW(TAG, "Count phase ambiguous: raw=%ld/%u; retaining last count",
+     (long)response.mileage_rotations,(unsigned)response.position_raw);
+    last_count_warning_us_ = sampled_at;
+   }
+   return false;
+  }
+ }
+ const int64_t position = state_.forward_ccw ? -position_tracker_.position() : position_tracker_.position();
  if (state_.origin_valid && response.mileage_rotations != state_.mileage_now) {
   ESP_LOGI(TAG, "CROSS raw %ld/%u -> %ld/%u start=%ld/%u delta=%lld",
    (long)state_.mileage_now,(unsigned)state_.motor_angle,
@@ -235,7 +255,9 @@ void ControlService::task_loop() {
  int64_t last_poll_us = 0;
  while (true) {
   control_cmd_t cmd{};
-  bool got = xQueueReceive(control_q_, &cmd, pdMS_TO_TICKS(50)) == pdTRUE;
+  const int64_t until_poll = last_poll_us + 50000 - esp_timer_get_time();
+  const int wait_ms = (int)std::max<int64_t>(1,std::min<int64_t>(50,until_poll/1000));
+  bool got = xQueueReceive(control_q_, &cmd, std::max<TickType_t>(1,pdMS_TO_TICKS(wait_ms))) == pdTRUE;
   // No idle/pause polling and no feedback-driven command loops.
   const int64_t now = esp_timer_get_time();
   // User commands (especially Stop) are handled before waiting for a query.

@@ -1,5 +1,6 @@
 #pragma once
 #include "app_types.hpp"
+#include "phase_position.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -29,6 +30,8 @@ private:
  SemaphoreHandle_t state_lock_ = nullptr;
  control_state_t state_{}; // Written only by control task after init.
  control_state_t published_{}; // Cross-task snapshot guarded by state_lock_.
+ position_math::PhasePosition position_tracker_;
+ int64_t last_count_warning_us_ = 0;
  bool motor_released_ = true;
  unsigned diagnostic_samples_ = 0;
  bool final_sample_pending_ = false;

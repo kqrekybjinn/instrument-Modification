@@ -2,8 +2,11 @@
 #include <iostream>
 #include <cmath>
 #include <string>
+#include <fstream>
+#include <sstream>
+#include <vector>
 using workflow::Phase;
-namespace mock {int64_t now=1000000;double position=7*32768+19000;int16_t rpm10=0;bool online=true;int writes=0;int queries=0;int brakes=0;bool enabled=false;int enables=0;int disables=0;std::string sequence;}
+namespace mock {int64_t now=1000000;double position=7*32768+19000;int16_t rpm10=0;bool online=true;int writes=0;int queries=0;int brakes=0;bool enabled=false;int enables=0;int disables=0;std::string sequence;int phase_boundary=0;bool scripted=false;int32_t script_mileage=0;uint16_t script_angle=0;}
 int64_t esp_timer_get_time(){return mock::now;}
 extern "C" {
 esp_err_t motor_driver_init(){return ESP_OK;}
@@ -14,14 +17,43 @@ esp_err_t motor_drive_speed(uint8_t,motor_drive_cmd_t d){mock::sequence+="D";moc
 esp_err_t motor_brake(uint8_t){mock::rpm10=0;mock::writes++;mock::brakes++;return ESP_OK;}
 esp_err_t motor_query_mileage(uint8_t,motor_mileage_resp_t *r){
  mock::sequence+="Q";mock::queries++;if(!mock::online)return ESP_ERR_TIMEOUT;
+ if(mock::scripted){r->mileage_rotations=mock::script_mileage;r->position_raw=mock::script_angle;r->fault_code=0;return ESP_OK;}
  auto raw=(int64_t)std::floor(mock::position);auto turns=(int32_t)std::floor((double)raw/32768);
- r->mileage_rotations=turns;r->position_raw=(uint16_t)(raw-(int64_t)turns*32768);r->fault_code=0;return ESP_OK;
+ r->position_raw=(uint16_t)(raw-(int64_t)turns*32768);
+ r->mileage_rotations=turns+(mock::phase_boundary>0&&r->position_raw>=mock::phase_boundary);r->fault_code=0;return ESP_OK;
 }
 }
 struct ControlServiceTest {
  static void tick(ControlService &c){mock::now+=50000;mock::position+=mock::rpm10/10.0/60*32768*0.05;if(c.should_poll_position()){c.refresh_position();c.final_sample_pending_=false;}c.service_motion(mock::now);c.publish();}
  static void command(ControlService &c,control_cmd_id_t id,int value=0){c.handle_command({id,(int16_t)value});c.publish();}
  static void settle(ControlService &c){for(int i=0;i<100&&c.state_.phase==Phase::Settling;i++){tick(c);}assert(c.state_.phase!=Phase::Settling);}
+ static void real_log_case(){
+ ControlService c;c.init();mock::online=true;mock::scripted=true;
+ std::ifstream file("artifacts/diagnostics/20261018-MOTOR.csv");assert(file);std::string line;
+ bool started=false,returning=false;int64_t expected=0;int previous=0,count=0;
+ while(std::getline(file,line)) {
+  std::stringstream stream(line);std::vector<std::string> f;std::string value;
+  while(std::getline(stream,value,','))f.push_back(value);
+  if(f.size()!=15||f[0]=="timestamp_ms"||f[9]!="1")continue;
+  const int phase=std::stoi(f[10]);
+  if(phase!=1&&phase!=4&&phase!=5&&!(returning&&phase==0))continue;
+  mock::now=std::stoll(f[0])*1000;mock::script_mileage=std::stoi(f[6]);mock::script_angle=std::stoi(f[11]);
+  if(!started){
+   command(c,CMD_MODE_SWITCH);command(c,CMD_SET_COUNT,10);command(c,CMD_SET_SPEED,100);
+   command(c,CMD_STATE_TOGGLE);previous=mock::script_angle;started=true;continue;
+  }
+  if(phase==5&&!returning){command(c,CMD_STOP);command(c,CMD_RETURN);returning=true;}
+  int step=(int)mock::script_angle-previous;if(step>16384)step-=32768;if(step<-16384)step+=32768;
+  expected+=step;previous=mock::script_angle;
+  assert(c.refresh_position());assert(workflow::displacement(c.state_)==expected);
+  c.service_motion(mock::now);++count;
+  if(phase==4){assert(c.state_.phase==Phase::Running);assert(expected==324274);}
+  if(phase==0){assert(c.state_.phase==Phase::Ready&&!c.state_.origin_valid);assert(expected<0&&expected>-16384);}
+ }
+ assert(count>80&&returning&&c.state_.phase==Phase::Ready);
+ mock::scripted=false;
+ std::cout<<"CONTROL_REAL_LOG_REPLAY_PASS\n";
+ }
  static void pause_resume_cases(){
  for(int mode:{0,1})for(bool returning:{false,true}) {
   ControlService c;c.init();mock::online=true;mock::position=8*32768;
@@ -83,10 +115,24 @@ struct ControlServiceTest {
  }
  mock::online=true;
 }
+ static void free_full_speed_cases(){
+ for(int boundary:{0,29300})for(int angle:{200,32700})for(bool ccw:{false,true}){
+  ControlService c;c.init();mock::online=true;mock::rpm10=0;mock::phase_boundary=boundary;
+  mock::position=7*32768+angle;const double origin=mock::position;
+  command(c,CMD_SET_SPEED,380);if(ccw)command(c,CMD_FORWARD_DIR_TOGGLE);command(c,CMD_STATE_TOGGLE);
+  for(int i=0;i<250;i++){
+   tick(c);assert(c.state_.feedback_valid);
+   double expected=(mock::position-origin)*(ccw?-1:1);
+   assert(std::abs(workflow::displacement(c.state_)-expected)<2);
+  }
+  assert(std::abs(mock::rpm10)==3800);command(c,CMD_STOP);
+ }
+ mock::phase_boundary=0;
+ }
  static void count_cases(){
- for(int target:{1,5})for(int angle:{0,100,19000,32700})for(bool ccw:{false,true}) {
-  ControlService c;c.init();mock::online=true;mock::rpm10=0;mock::position=7*32768+angle;
-  command(c,CMD_MODE_SWITCH);command(c,CMD_SET_COUNT,target);command(c,CMD_SET_SPEED,50);
+ for(int boundary:{0,10000,29300})for(int speed:{50,380})for(int target:{1,5})for(int angle:{0,100,19000,32700})for(bool ccw:{false,true}) {
+  ControlService c;c.init();mock::online=true;mock::rpm10=0;mock::position=7*32768+angle;mock::phase_boundary=boundary;
+  command(c,CMD_MODE_SWITCH);command(c,CMD_SET_COUNT,target);command(c,CMD_SET_SPEED,speed);
   if(ccw)command(c,CMD_FORWARD_DIR_TOGGLE);
   const double start=mock::position;command(c,CMD_STATE_TOGGLE);
   assert(c.state_.phase==Phase::Running&&workflow::displacement(c.state_)==0&&mock::rpm10!=0);
@@ -94,7 +140,12 @@ struct ControlServiceTest {
   assert(c.state_.phase==Phase::Complete);
   const double actual=(mock::position-start)*(ccw?-1:1)/32768;
   assert(actual>=target&&actual<target+0.5);
+ command(c,CMD_RETURN);
+ for(int i=0;i<600&&c.state_.phase!=Phase::Ready;i++)tick(c);
+ assert(c.state_.phase==Phase::Ready);
+ assert(std::abs(mock::position-start)/32768<0.5);
  }
+ mock::phase_boundary=0;
 }
  static void run(){
  ControlService c;c.init();c.refresh_position();c.publish();
@@ -132,4 +183,4 @@ struct ControlServiceTest {
  std::cout<<"CONTROL_INTEGRATION_PASS\n";
  }
 };
-int main(){ControlServiceTest::release_cases();ControlServiceTest::idle_position_case();ControlServiceTest::pause_resume_cases();ControlServiceTest::emergency_cases();ControlServiceTest::count_cases();ControlServiceTest::run();}
+int main(){ControlServiceTest::real_log_case();ControlServiceTest::release_cases();ControlServiceTest::idle_position_case();ControlServiceTest::pause_resume_cases();ControlServiceTest::emergency_cases();ControlServiceTest::free_full_speed_cases();ControlServiceTest::count_cases();ControlServiceTest::run();}
