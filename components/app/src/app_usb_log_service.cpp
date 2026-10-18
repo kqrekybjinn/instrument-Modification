@@ -27,6 +27,7 @@ void UsbLogService::task_trampoline(void *arg)
 void UsbLogService::task_loop()
 {
     bool header_written = false;
+    int last_phase = -1;
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -39,19 +40,20 @@ void UsbLogService::task_loop()
         control_state_t st = control_.snapshot();
         gui_app_update_usb(true);
 
-        if (!st.running) {
-            continue;
-        }
+        // Also capture the final stop and the start-preparation transition.
+        const bool changed = last_phase != (int)st.phase;
+        last_phase = (int)st.phase;
+        if (!st.running && !changed) continue;
 
         if (!header_written) {
-            const char *hdr = "timestamp_ms,mode,motor_running,motor_rpm,sensor_value,target_count,mileage_now,mileage_delta,rotation_units,feedback_valid\n";
+            const char *hdr = "timestamp_ms,mode,motor_running,motor_rpm,sensor_value,target_count,mileage_now,mileage_delta,rotation_units,feedback_valid,phase,angle_raw,origin_mileage,origin_angle,origin_units\n";
             (void)msc_write_file("logs/motor_log.csv", hdr, strlen(hdr), false);
             header_written = true;
         }
 
         int64_t now_ms = esp_timer_get_time() / 1000;
-        char line[160];
-        int n = snprintf(line, sizeof(line), "%lld,%s,%d,%d,%ld,%d,%ld,%ld,%lld,%d\n",
+        char line[256];
+        int n = snprintf(line, sizeof(line), "%lld,%s,%d,%d,%ld,%d,%ld,%ld,%lld,%d,%u,%u,%ld,%u,%lld\n",
                          (long long)now_ms,
                          st.mode == MODE_COUNT ? "COUNT" : "FREE",
                          st.running,
@@ -63,7 +65,9 @@ void UsbLogService::task_loop()
                                 ? (st.pos_fixed_now - st.pos_fixed_start) / 32768
                                 : (st.mileage_start >= 0 ? st.mileage_now - st.mileage_start : 0)),
                          (long long)(st.pos_fixed_start != INT64_MIN ? st.pos_fixed_now - st.pos_fixed_start : 0),
-                         st.feedback_valid);
+                         st.feedback_valid, (unsigned)st.phase, (unsigned)st.motor_angle,
+                         (long)st.mileage_start, (unsigned)st.motor_angle_start,
+                         (long long)st.pos_fixed_start);
         if (n > 0 && n < (int)sizeof(line)) {
             (void)msc_write_file("logs/motor_log.csv", line, (size_t)n, true);
         }

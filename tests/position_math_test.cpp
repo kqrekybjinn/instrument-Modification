@@ -3,6 +3,9 @@
 #include <climits>
 int main() {
  using namespace position_math;
+ // A one-count mileage change plus 0.8-turn angle change is displayed as 1.8.
+ // There is no extra +1 in the display; raw field semantics must be checked on hardware.
+ assert(hundredths(oriented_position(8,31214,false)-oriented_position(7,5000,false))==179);
  // Arbitrary starting angle: crossing the zero angle is not a full turn.
  auto start = oriented_position(7, 30000, false);
  assert(oriented_position(8, 2000, false) - start == 4768);

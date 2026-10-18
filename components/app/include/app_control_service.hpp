@@ -24,10 +24,12 @@ private:
  void handle_command(control_cmd_t command);
  void service_motion(int64_t now);
  bool send_speed(int16_t rpm10);
+ bool release_motor();
  QueueHandle_t control_q_ = nullptr;
  SemaphoreHandle_t state_lock_ = nullptr;
  control_state_t state_{}; // Written only by control task after init.
  control_state_t published_{}; // Cross-task snapshot guarded by state_lock_.
+ bool motor_released_ = true;
  unsigned diagnostic_samples_ = 0;
  bool final_sample_pending_ = false;
  int16_t sent_rpm10_ = 0;

@@ -69,6 +69,7 @@ esp_err_t motor_driver_init(void);
 
 // Mode control
 esp_err_t motor_enable(uint8_t motor_id);
+esp_err_t motor_disable(uint8_t motor_id);
 esp_err_t motor_set_speed_mode(uint8_t motor_id);
 esp_err_t motor_set_position_mode(uint8_t motor_id);
 

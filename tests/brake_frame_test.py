@@ -16,12 +16,14 @@ harness = """#include <stdint.h>
 typedef int esp_err_t;
 #define MOTOR_FRAME_LEN 10
 #define MOTOR_CMD_DRIVE 0x64
+#define MOTOR_CMD_SWITCH 0xa0
+#define MOTOR_MODE_VAL_DISABLE 0x09
 static uint8_t captured[10];
 static esp_err_t motor_uart_write(uint8_t *frame);
 """ + function("uint8_t crc8_maxim(") + """
 static esp_err_t motor_uart_write(uint8_t *frame){frame[9]=crc8_maxim(frame,9);memcpy(captured,frame,10);return 0;}
-""" + function("esp_err_t motor_brake(") + """
-int main(void){const uint8_t expected[10]={1,0x64,0,0,0,0,0,0xff,0,0xd1};assert(motor_brake(1)==0);assert(memcmp(captured,expected,10)==0);}
+""" + function("esp_err_t motor_disable(") + function("esp_err_t motor_brake(") + """
+int main(void){assert(crc8_maxim((const uint8_t*)"123456789",9)==0xa1);const uint8_t disabled[10]={1,0xa0,9,0,0,0,0,0,0,0x52};assert(motor_disable(1)==0);assert(memcmp(captured,disabled,10)==0);const uint8_t expected[10]={1,0x64,0,0,0,0,0,0xff,0,0xd1};assert(motor_brake(1)==0);assert(memcmp(captured,expected,10)==0);}
 """
 with tempfile.TemporaryDirectory() as directory:
     test = pathlib.Path(directory)/"brake.c"

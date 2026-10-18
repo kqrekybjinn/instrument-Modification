@@ -72,6 +72,12 @@ esp_err_t motor_enable(uint8_t motor_id)
     return err;
 }
 
+esp_err_t motor_disable(uint8_t motor_id)
+{
+    uint8_t frame[MOTOR_FRAME_LEN] = {motor_id, MOTOR_CMD_SWITCH, MOTOR_MODE_VAL_DISABLE, 0, 0, 0, 0, 0, 0, 0};
+    return motor_uart_write(frame);
+}
+
 esp_err_t motor_set_speed_mode(uint8_t motor_id)
 {
     uint8_t frame[MOTOR_FRAME_LEN] = {motor_id, MOTOR_CMD_SWITCH, MOTOR_MODE_VAL_SPEED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};

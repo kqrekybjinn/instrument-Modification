@@ -57,6 +57,13 @@ void ControlService::publish() {
   state_.target_count, state_.count_step, workflow::displacement(state_), state_.motor_fault, state_.mileage_now, state_.motor_angle};
  gui_app_render(&view);
 }
+bool ControlService::release_motor() {
+ const auto err = motor_disable(MOTOR_DEFAULT_ID);
+ if (err != ESP_OK) { ESP_LOGE(TAG, "Motor release write failed"); return false; }
+ motor_released_ = true;
+ sent_rpm10_ = 0;
+ return true;
+}
 bool ControlService::send_speed(int16_t rpm10) {
  motor_drive_cmd_t drive{rpm10};
  const esp_err_t err = motor_drive_speed(MOTOR_DEFAULT_ID, drive);
@@ -72,6 +79,13 @@ bool ControlService::refresh_position() {
  state_.feedback_valid = err == ESP_OK && response.fault_code == 0 && response.position_raw < 32768;
  if (!state_.feedback_valid) return false;
  const int64_t position = position_math::oriented_position(response.mileage_rotations, response.position_raw, state_.forward_ccw);
+ if (state_.origin_valid && response.mileage_rotations != state_.mileage_now) {
+  ESP_LOGI(TAG, "CROSS raw %ld/%u -> %ld/%u start=%ld/%u delta=%lld",
+   (long)state_.mileage_now,(unsigned)state_.motor_angle,
+   (long)response.mileage_rotations,(unsigned)response.position_raw,
+   (long)state_.mileage_start,(unsigned)state_.motor_angle_start,
+   (long long)(position-state_.pos_fixed_start));
+ }
  state_.pos_fixed_now = position;
  state_.mileage_now = response.mileage_rotations;
  state_.motor_angle = response.position_raw;
@@ -96,7 +110,7 @@ void ControlService::finish_stop(bool emergency) {
   else { state_.feedback_valid = false; ESP_LOGE(TAG, "Emergency brake write failed"); }
  } else send_speed(0); // One command, without confirmation or retransmit loops.
  const auto destination = state_.settle_destination;
- if (destination == Phase::Ready) workflow::prepare_new(state_);
+ if (destination == Phase::Ready) { workflow::prepare_new(state_); release_motor(); }
  else workflow::set_phase(state_, destination);
  final_sample_pending_ = true; // One final reading; failure never locks the controls.
 }
@@ -125,7 +139,7 @@ void ControlService::handle_command(control_cmd_t cmd) {
   return;
  }
  if (cmd.id == CMD_NEW_RUN) {
-  if (workflow::transition(state_, workflow::Action::NewRun) == Phase::Ready) { workflow::prepare_new(state_); final_sample_pending_ = false; }
+  if (workflow::transition(state_, workflow::Action::NewRun) == Phase::Ready) { workflow::prepare_new(state_); release_motor(); final_sample_pending_ = false; }
   return;
  }
  if (cmd.id == CMD_STOP) {
@@ -147,17 +161,22 @@ void ControlService::handle_command(control_cmd_t cmd) {
  }
  Phase next = workflow::transition(state_, cmd.id == CMD_RETURN ? workflow::Action::Return : workflow::Action::Toggle);
  if (next == state_.phase) return;
- if (next == Phase::Ready) { workflow::prepare_new(state_); return; }
+ if (next == Phase::Ready) { workflow::prepare_new(state_); release_motor(); return; }
  if (next == Phase::Complete) { workflow::set_phase(state_, next); return; }
  if (next != Phase::Running && next != Phase::Returning) return;
  if (state_.phase == Phase::Ready) {
+  if (motor_released_) {
+   if (motor_enable(MOTOR_DEFAULT_ID) != ESP_OK) return;
+   motor_released_ = false;
+  }
   // An immediate fresh query establishes origin; never use a cached or fallback zero.
   diagnostic_samples_ = 8;
-  if (!refresh_position()) { ESP_LOGW(TAG, "Start: origin query failed"); return; }
+  if (!refresh_position()) { ESP_LOGW(TAG, "Start: origin query failed"); release_motor(); return; }
   state_.origin_valid = true;
   state_.pos_fixed_start = state_.pos_fixed_now;
   state_.pos_fixed_peak = state_.pos_fixed_now;
   state_.mileage_start = state_.mileage_now;
+  state_.motor_angle_start = state_.motor_angle;
   ESP_LOGI(TAG, "Start target=%d mode=%u origin=%lld", state_.target_count, state_.mode, (long long)state_.pos_fixed_start);
  }
  if (!state_.origin_valid) return;
@@ -197,10 +216,10 @@ void ControlService::service_motion(int64_t now) {
 void ControlService::task_loop() {
  for (int percent = 0; percent < 100; percent += 4) { gui_app_update_boot(percent); vTaskDelay(pdMS_TO_TICKS(100)); }
  ESP_ERROR_CHECK(motor_driver_init());
- ESP_ERROR_CHECK(motor_enable(MOTOR_DEFAULT_ID));
  vTaskDelay(pdMS_TO_TICKS(100));
  ESP_ERROR_CHECK(motor_set_speed_mode(MOTOR_DEFAULT_ID));
- send_speed(0);
+ ESP_ERROR_CHECK(motor_disable(MOTOR_DEFAULT_ID));
+ motor_released_ = true;
  gui_app_enter_main_ui();
  int64_t last_poll_us = 0;
  while (true) {
