@@ -62,7 +62,7 @@ static esp_err_t msc_ensure_dir_for_file(const char *abs_path)
     for (char *p = tmp + 1; *p; ++p) {
         if (*p == '/') {
             *p = '\0';
-            mkdir(tmp, 0777);
+            if (mkdir(tmp, 0777) != 0 && errno != EEXIST) return ESP_FAIL;
             *p = '/';
         }
     }
@@ -126,10 +126,12 @@ esp_err_t msc_write_file(const char *rel_path, const void *data, size_t len, boo
         return err;
     }
 
-    msc_ensure_dir_for_file(abs_path);
+    err = msc_ensure_dir_for_file(abs_path);
+    if (err != ESP_OK) { xSemaphoreGive(s_io_lock); return err; }
 
     FILE *f = fopen(abs_path, append ? "ab" : "wb");
     if (!f) {
+        ESP_LOGE(TAG, "Open failed: %s errno=%d", abs_path, errno);
         err = ESP_FAIL;
         goto out;
     }
@@ -137,11 +139,11 @@ esp_err_t msc_write_file(const char *rel_path, const void *data, size_t len, boo
     if (written != len) {
         err = ESP_FAIL;
     } else {
-        fflush(f);
-        fsync(fileno(f));
-        err = ESP_OK;
+        err = fflush(f) == 0 ? ESP_OK : ESP_FAIL;
+        if (err == ESP_OK && fsync(fileno(f)) != 0) err = ESP_FAIL;
     }
-    fclose(f);
+    if (fclose(f) != 0) err = ESP_FAIL;
+    if (err != ESP_OK) ESP_LOGE(TAG, "Write failed: %s errno=%d", abs_path, errno);
 out:
     xSemaphoreGive(s_io_lock);
     return err;

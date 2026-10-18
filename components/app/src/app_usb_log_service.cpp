@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 
 #include "esp_timer.h"
+#include "esp_log.h"
 
 extern "C" {
 #include "gui_app.h"
@@ -26,29 +27,48 @@ void UsbLogService::task_trampoline(void *arg)
 
 void UsbLogService::task_loop()
 {
-    bool header_written = false;
-    int last_phase = -1;
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(100));
+        sample_once();
+    }
+}
+
+void UsbLogService::report_error(const char *operation, esp_err_t error)
+{
+    const int64_t now = esp_timer_get_time();
+    if (now - last_error_us_ >= 1000000) {
+        ESP_LOGE("USB_LOG", "%s failed: %d", operation, (int)error);
+        last_error_us_ = now;
+    }
+}
+
+void UsbLogService::sample_once()
+{
         if (!msc_is_mounted()) {
-            header_written = false;
+            header_written_ = false;
+            last_phase_ = -1;
             gui_app_update_usb(false);
-            continue;
+            return;
         }
 
         control_state_t st = control_.snapshot();
         gui_app_update_usb(true);
 
         // Also capture the final stop and the start-preparation transition.
-        const bool changed = last_phase != (int)st.phase;
-        last_phase = (int)st.phase;
-        if (!st.running && !changed) continue;
+        const bool changed = last_phase_ != (int)st.phase;
+        if (!st.running && !changed) return;
 
-        if (!header_written) {
+        if (!header_written_) {
             const char *hdr = "timestamp_ms,mode,motor_running,motor_rpm,sensor_value,target_count,mileage_now,mileage_delta,rotation_units,feedback_valid,phase,angle_raw,origin_mileage,origin_angle,origin_units\n";
-            (void)msc_write_file("logs/motor_log.csv", hdr, strlen(hdr), false);
-            header_written = true;
+            // Preserve previous runs; create a header only for a missing/empty file.
+            char first; size_t existing = 0;
+            const auto read_error = msc_read_file("logs/motor.csv", &first, 1, &existing);
+            if (read_error != ESP_OK || existing == 0) {
+                const auto error = msc_write_file("logs/motor.csv", hdr, strlen(hdr), true);
+                if (error != ESP_OK) { report_error("header write", error); return; }
+            }
+            header_written_ = true;
         }
 
         int64_t now_ms = esp_timer_get_time() / 1000;
@@ -69,7 +89,8 @@ void UsbLogService::task_loop()
                          (long)st.mileage_start, (unsigned)st.motor_angle_start,
                          (long long)st.pos_fixed_start);
         if (n > 0 && n < (int)sizeof(line)) {
-            (void)msc_write_file("logs/motor_log.csv", line, (size_t)n, true);
+            const auto error = msc_write_file("logs/motor.csv", line, (size_t)n, true);
+            if (error != ESP_OK) { report_error("sample write", error); return; }
+            last_phase_ = (int)st.phase;
         }
-    }
 }
