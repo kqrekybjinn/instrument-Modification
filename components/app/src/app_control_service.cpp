@@ -77,7 +77,14 @@ bool ControlService::refresh_position() {
  const auto err = motor_query_mileage(MOTOR_DEFAULT_ID, &response);
  state_.motor_fault = err == ESP_OK ? response.fault_code : state_.motor_fault;
  state_.feedback_valid = err == ESP_OK && response.fault_code == 0 && response.position_raw < 32768;
- if (!state_.feedback_valid) return false;
+ if (!state_.feedback_valid) {
+  if (diagnostic_samples_) {
+   --diagnostic_samples_;
+   ESP_LOGW(TAG, "Position rejected: status=%d fault=0x%02X angle=%u", (int)err,
+    (unsigned)response.fault_code, (unsigned)response.position_raw);
+  }
+  return false;
+ }
  const int64_t position = position_math::oriented_position(response.mileage_rotations, response.position_raw, state_.forward_ccw);
  if (state_.origin_valid && response.mileage_rotations != state_.mileage_now) {
   ESP_LOGI(TAG, "CROSS raw %ld/%u -> %ld/%u start=%ld/%u delta=%lld",
@@ -168,6 +175,11 @@ void ControlService::handle_command(control_cmd_t cmd) {
   if (motor_released_) {
    if (motor_enable(MOTOR_DEFAULT_ID) != ESP_OK) return;
    motor_released_ = false;
+   // Restore the previous working order after a release: enable -> wait -> speed mode.
+   // Allow switch replies to complete before the origin query flushes RX.
+   vTaskDelay(pdMS_TO_TICKS(100));
+   if (motor_set_speed_mode(MOTOR_DEFAULT_ID) != ESP_OK) { release_motor(); return; }
+   vTaskDelay(pdMS_TO_TICKS(20));
   }
   // An immediate fresh query establishes origin; never use a cached or fallback zero.
   diagnostic_samples_ = 8;
@@ -217,7 +229,6 @@ void ControlService::task_loop() {
  for (int percent = 0; percent < 100; percent += 4) { gui_app_update_boot(percent); vTaskDelay(pdMS_TO_TICKS(100)); }
  ESP_ERROR_CHECK(motor_driver_init());
  vTaskDelay(pdMS_TO_TICKS(100));
- ESP_ERROR_CHECK(motor_set_speed_mode(MOTOR_DEFAULT_ID));
  ESP_ERROR_CHECK(motor_disable(MOTOR_DEFAULT_ID));
  motor_released_ = true;
  gui_app_enter_main_ui();
