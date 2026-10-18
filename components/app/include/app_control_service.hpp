@@ -36,6 +36,7 @@ private:
  unsigned diagnostic_samples_ = 0;
  bool final_sample_pending_ = false;
  int16_t sent_rpm10_ = 0;
+ int sample_peak_rpm_ = 0;
  int64_t last_motion_us_ = 0;
  int64_t last_idle_sample_us_ = 0;
 };

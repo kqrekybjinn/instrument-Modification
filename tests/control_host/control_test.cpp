@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <memory>
 using workflow::Phase;
 namespace mock {int64_t now=1000000;double position=7*32768+19000;int16_t rpm10=0;bool online=true;int writes=0;int queries=0;int brakes=0;bool enabled=false;int enables=0;int disables=0;std::string sequence;int phase_boundary=0;bool scripted=false;int32_t script_mileage=0;uint16_t script_angle=0;}
 int64_t esp_timer_get_time(){return mock::now;}
@@ -27,6 +28,42 @@ struct ControlServiceTest {
  static void tick(ControlService &c){mock::now+=50000;mock::position+=mock::rpm10/10.0/60*32768*0.05;if(c.should_poll_position()){c.refresh_position();c.final_sample_pending_=false;}c.service_motion(mock::now);c.publish();}
  static void command(ControlService &c,control_cmd_id_t id,int value=0){c.handle_command({id,(int16_t)value});c.publish();}
  static void settle(ControlService &c){for(int i=0;i<100&&c.state_.phase==Phase::Settling;i++){tick(c);}assert(c.state_.phase!=Phase::Settling);}
+ static void command_peak_case(){
+ ControlService c;c.init();mock::online=true;mock::scripted=false;
+ c.send_speed(3800);c.send_speed(300);assert(c.sample_peak_rpm_==380);
+ assert(c.refresh_position());assert(c.sample_peak_rpm_==30);
+ c.send_speed(3800);c.send_speed(0);assert(c.sample_peak_rpm_==380);
+ assert(c.refresh_position());assert(c.sample_peak_rpm_==0);
+ }
+ static void high_rpm_log_case(){
+ std::ifstream file("artifacts/diagnostics/20261018-HIGH-RPM.csv");assert(file);std::string line;
+ std::unique_ptr<ControlService> c;bool previous_high=false;std::string origin_key;int previous=0,samples=0,runs=0;int64_t expected=0;
+ mock::scripted=true;mock::online=true;
+ while(std::getline(file,line)){
+  std::stringstream stream(line);std::vector<std::string> f;std::string value;
+  while(std::getline(stream,value,','))f.push_back(value);
+  if(f.size()!=15||f[0]=="timestamp_ms")continue;
+  int phase=std::stoi(f[10]),rpm=std::stoi(f[3]);
+  bool high=phase==1&&(rpm==300||rpm==380);
+  if(!high){previous_high=false;continue;}
+  mock::now=std::stoll(f[0])*1000;
+  if(!previous_high||origin_key!=f[14]){
+   c=std::make_unique<ControlService>();c->init();mock::rpm10=0;
+   mock::script_mileage=std::stoi(f[12]);mock::script_angle=std::stoi(f[13]);
+   command(*c,CMD_MODE_SWITCH);command(*c,CMD_SET_COUNT,std::stoi(f[5]));command(*c,CMD_SET_SPEED,rpm);command(*c,CMD_STATE_TOGGLE);
+   previous=mock::script_angle;expected=0;origin_key=f[14];++runs;
+  }
+  previous_high=true;mock::script_mileage=std::stoi(f[6]);mock::script_angle=std::stoi(f[11]);
+  int step=(int)mock::script_angle-previous;if(step>16384)step-=32768;if(step<-16384)step+=32768;
+  expected+=step;previous=mock::script_angle;
+  if(!c->refresh_position()){std::cerr<<"REJECT t="<<mock::now<<" rpm="<<rpm<<" peak="<<c->sample_peak_rpm_<<" angle="<<mock::script_angle<<" expected="<<expected<<" origin="<<origin_key<<"\n";assert(false);}assert(workflow::displacement(c->state_)==expected);
+  // These recorded runs stayed at the initial 30 RPM because old counting froze.
+  // Keep that actual command for replay; do not simulate a counterfactual acceleration.
+  assert(c->state_.phase==Phase::Running);++samples;
+ }
+ assert(samples>150&&runs>=2);mock::scripted=false;
+ std::cout<<"HIGH_RPM_REAL_LOG_REPLAY_PASS "<<samples<<" samples in "<<runs<<" runs\n";
+ }
  static void real_log_case(){
  ControlService c;c.init();mock::online=true;mock::scripted=true;
  std::ifstream file("artifacts/diagnostics/20261018-MOTOR.csv");assert(file);std::string line;
@@ -45,6 +82,9 @@ struct ControlServiceTest {
   if(phase==5&&!returning){command(c,CMD_STOP);command(c,CMD_RETURN);returning=true;}
   int step=(int)mock::script_angle-previous;if(step>16384)step-=32768;if(step<-16384)step+=32768;
   expected+=step;previous=mock::script_angle;
+  // This older capture was produced by the old ramp, which commanded up to 100 RPM.
+  // Feed that historical command ceiling rather than the replay controller's different ramp.
+  c.sample_peak_rpm_=100;
   assert(c.refresh_position());assert(workflow::displacement(c.state_)==expected);
   c.service_motion(mock::now);++count;
   if(phase==4){assert(c.state_.phase==Phase::Running);assert(expected==324274);}
@@ -125,7 +165,16 @@ struct ControlServiceTest {
    double expected=(mock::position-origin)*(ccw?-1:1);
    assert(std::abs(workflow::displacement(c.state_)-expected)<2);
   }
-  assert(std::abs(mock::rpm10)==3800);command(c,CMD_STOP);
+  assert(std::abs(mock::rpm10)==3800);
+  int recovered=0;
+  const int gaps[]={50,130,170,70,120,90};
+  for(int i=0;i<120;i++){
+   int dt=gaps[i%6];mock::now+=dt*1000;
+   mock::position+=mock::rpm10/10.0/60*32768*dt/1000.0;
+   bool valid=c.refresh_position();c.service_motion(mock::now);
+   if(valid){++recovered;double expected=(mock::position-origin)*(ccw?-1:1);assert(std::abs(workflow::displacement(c.state_)-expected)<2);}
+  }
+  assert(recovered>100);command(c,CMD_STOP);
  }
  mock::phase_boundary=0;
  }
@@ -183,4 +232,4 @@ struct ControlServiceTest {
  std::cout<<"CONTROL_INTEGRATION_PASS\n";
  }
 };
-int main(){ControlServiceTest::real_log_case();ControlServiceTest::release_cases();ControlServiceTest::idle_position_case();ControlServiceTest::pause_resume_cases();ControlServiceTest::emergency_cases();ControlServiceTest::free_full_speed_cases();ControlServiceTest::count_cases();ControlServiceTest::run();}
+int main(){ControlServiceTest::command_peak_case();ControlServiceTest::high_rpm_log_case();ControlServiceTest::real_log_case();ControlServiceTest::release_cases();ControlServiceTest::idle_position_case();ControlServiceTest::pause_resume_cases();ControlServiceTest::emergency_cases();ControlServiceTest::free_full_speed_cases();ControlServiceTest::count_cases();ControlServiceTest::run();}

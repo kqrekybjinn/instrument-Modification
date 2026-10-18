@@ -138,7 +138,10 @@ esp_err_t gui_app_init(SemaphoreHandle_t lock,gui_event_cb_t cb) {
 void gui_app_update_boot(uint8_t p) {if(!take())return;if(!built_&&boot_bar_)lv_bar_set_value(boot_bar_,p,LV_ANIM_OFF);give();}
 void gui_app_enter_main_ui() {if(!take())return;boot_label_=nullptr;boot_bar_=nullptr;build();give();}
 void gui_app_render(const gui_view_t *v) {
- if(!v||!take())return;
+ if(!v)return;
+ // The control task must never wait behind LCD/touch rendering.
+ // If GUI owns the lock, its next successful update receives the latest view.
+ if(lock_ && xSemaphoreTakeRecursive(lock_,0)!=pdTRUE)return;
  view_=*v;if(!built_){give();return;}
  const auto p=(Phase)v->phase;const bool ready=p==Phase::Ready&&!v->origin_valid;
  const bool result=p==Phase::Stopped||p==Phase::Complete||p==Phase::ReturnStopped;

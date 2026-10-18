@@ -23,6 +23,7 @@ static int profile_rpm(int64_t travelled, int64_t remaining, int rpm, bool decel
 void ControlService::init() {
  state_ = control_state_t{};
  position_tracker_ = position_math::PhasePosition{};
+ sample_peak_rpm_ = 0;
  published_ = state_;
  state_lock_ = xSemaphoreCreateMutex();
  control_q_ = xQueueCreate(16, sizeof(control_cmd_t));
@@ -70,6 +71,7 @@ bool ControlService::send_speed(int16_t rpm10) {
  const esp_err_t err = motor_drive_speed(MOTOR_DEFAULT_ID, drive);
  if (err != ESP_OK) { state_.feedback_valid = false; return false; }
  sent_rpm10_ = rpm10;
+ sample_peak_rpm_ = std::max(sample_peak_rpm_,abs(rpm10)/10);
  return true;
 }
 bool ControlService::refresh_position() {
@@ -90,9 +92,10 @@ bool ControlService::refresh_position() {
  if (!state_.origin_valid || !position_tracker_.initialized()) {
   position_tracker_.reset(response.mileage_rotations, response.position_raw, sampled_at);
  } else {
-  // Bound angle unwrapping by elapsed time and the higher of selected/sent RPM.
+  // Bound travel by commands actually sent since the last accepted sample.
+  // A high setpoint is not physical speed while starting at 30 RPM.
   // Beyond that window, only the learned mileage/angle phase can recover turns.
-  const int speed_bound = std::min(400, std::max((int)state_.target_rpm, abs(sent_rpm10_)/10)+20);
+  const int speed_bound = std::min(400,std::max(30,sample_peak_rpm_)+20);
   if (!position_tracker_.update(response.mileage_rotations, response.position_raw, sampled_at, speed_bound)) {
    state_.mileage_now = response.mileage_rotations;
    state_.motor_angle = response.position_raw;
@@ -105,6 +108,7 @@ bool ControlService::refresh_position() {
    return false;
   }
  }
+ sample_peak_rpm_ = abs(sent_rpm10_)/10;
  const int64_t position = state_.forward_ccw ? -position_tracker_.position() : position_tracker_.position();
  if (state_.origin_valid && response.mileage_rotations != state_.mileage_now) {
   ESP_LOGI(TAG, "CROSS raw %ld/%u -> %ld/%u start=%ld/%u delta=%lld",
